@@ -17,11 +17,6 @@ final class GhosttyCallbacks: @unchecked Sendable {
 
     func action(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
         switch action.tag {
-        case GHOSTTY_ACTION_SET_TITLE:
-            guard let view = surfaceView(from: target) else { return true }
-            let title = action.action.set_title.title.flatMap { String(cString: $0) } ?? ""
-            DispatchQueue.main.async { view.applyTitle(title) }
-            return true
         case GHOSTTY_ACTION_PWD:
             guard let view = surfaceView(from: target), let ptr = action.action.pwd.pwd else { return true }
             let pwd = String(cString: ptr)

@@ -1,29 +1,37 @@
 // adapted from thdxg/macterm (MIT)
 
+import agtCore
 import AppKit
 import GhosttyKit
 import QuartzCore
 
-/// A Metal-backed NSView hosting one libghostty surface (one shell).
+/// A Metal-backed NSView hosting one libghostty surface (one shell). Conforms to
+/// `TerminalSurface` so the host-free `Session` can own it without importing
+/// GhosttyKit/AppKit.
 ///
 /// `surface` and the `configCStrings` strdup buffers are `nonisolated(unsafe)`:
 /// they are mutated only on the main actor (create/destroy) and the C callbacks
 /// that read them are serialized by libghostty's tick model.
-final class GhosttySurfaceView: NSView {
+final class GhosttySurfaceView: NSView, TerminalSurface {
     nonisolated(unsafe) private(set) var surface: ghostty_surface_t?
 
     private let workingDirectory: String
+
+    /// The owning model session. `weak` to avoid a retain cycle: the `Session`
+    /// strongly owns this surface via `Session.surface`. Set by the app's surface
+    /// factory after construction.
+    weak var session: Session?
+
+    /// Called on the main actor when the shell process exits, so the app can
+    /// close the owning session (free the surface and drop the sidebar row). Set
+    /// by the app's surface factory.
+    var onExit: (() -> Void)?
 
     /// Heap buffers backing the `const char*` fields of the surface config —
     /// notably `initial_input`, which libghostty writes to the pty
     /// asynchronously after the child spawns, so the buffer must outlive
     /// `ghostty_surface_new`. Retained here and freed in `destroySurface`.
     nonisolated(unsafe) private var configCStrings: [UnsafeMutablePointer<CChar>] = []
-
-    /// Most recent reported pwd / title. Plain storage for now; Task 3 wires
-    /// these to the owning `Session`.
-    private(set) var currentPwd: String?
-    private(set) var lastReportedTitle: String?
 
     private var isFocused = false
     private var pendingSurfaceCreation = false
@@ -50,23 +58,29 @@ final class GhosttySurfaceView: NSView {
     }
 
     deinit {
-        if let surface { ghostty_surface_free(surface) }
-        configCStrings.forEach { free($0) }
+        // single teardown body; destroySurface is idempotent via its
+        // isDestroyed / surface == nil guards.
+        destroySurface()
     }
 
     // MARK: - Callback entry points
 
     func applyPwd(_ pwd: String) {
-        currentPwd = pwd
-    }
-
-    func applyTitle(_ title: String) {
-        lastReportedTitle = title
+        // Already on the main actor (the callback hops via DispatchQueue.main.async).
+        // `currentCwd` is observed, so the sidebar row refreshes live.
+        //
+        // This deliberately does NOT save(): OSC 7 fires on every cd/prompt redraw,
+        // so persisting here would thrash the disk. Live cwd is persisted on quit
+        // and on structural mutations (add/close/move/rename/select), not on every
+        // cd, so a crash/force-quit loses only cwd changes since the last save.
+        session?.currentCwd = pwd
     }
 
     func handleProcessExit() {
-        // Task 1 spike: nothing to do beyond letting the surface sit. The
-        // AppStore.closeSession wiring arrives in a later task.
+        // Already on the main actor (the close callback hops via
+        // DispatchQueue.main.async). Ask the app to close the owning session,
+        // which tears down this surface and removes its sidebar row.
+        onExit?()
     }
 
     // MARK: - Surface lifecycle
@@ -119,6 +133,12 @@ final class GhosttySurfaceView: NSView {
         configCStrings = []
     }
 
+    /// `TerminalSurface` conformance: the model calls this when the owning
+    /// session is closed.
+    func teardown() {
+        destroySurface()
+    }
+
     // MARK: - Window / size
 
     override func viewDidMoveToWindow() {
@@ -136,8 +156,8 @@ final class GhosttySurfaceView: NSView {
             ghostty_surface_set_focus(surface, isFocused)
         }
         updateMetalLayerSize()
-        // Grab keyboard focus so the spike shell is usable immediately.
-        window.makeFirstResponder(self)
+        // Focus is driven by TerminalView.updateNSView when this surface becomes
+        // the active session's detail view, so it isn't grabbed here.
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -201,7 +221,7 @@ final class GhosttySurfaceView: NSView {
         if let existing = currentTrackingArea { removeTrackingArea(existing) }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
             owner: self
         )
         addTrackingArea(area)
