@@ -61,3 +61,9 @@ The app must build and `swift test` must stay green after every change.
 - Copy any `char*` into a Swift `String` before hopping; every `@MainActor` touch goes through `DispatchQueue.main.async`.
 - `MainActor.assumeIsolated` is allowed only in the `RunLoop.main` timer closure, never in the other callbacks.
 - `close_surface_cb` only recovers the view and dispatches to the main actor; it never frees synchronously.
+
+## App icon
+
+- The artwork lives in `agt/Assets.xcassets/AppIcon.appiconset` (full-bleed rounded square, 16–1024). `CFBundleIconName`/`ASSETCATALOG_COMPILER_APPICON_NAME` are both `AppIcon`. Keep it full-bleed (the rounded square fills the canvas, no transparent margin) so the Dock tile matches neighbor apps; an inset/margined source renders visibly smaller.
+- **Dock tile is set explicitly at launch.** `AppDelegate.applicationWillFinishLaunching` sets `NSApp.applicationIconImage` because an ad-hoc-signed Debug app launched from DerivedData doesn't forward its bundle icon to the Dock through the usual runtime path (Finder resolves it fine).
+- **Load from the asset catalog, not Icon Services.** Use `NSImage(named: "AppIcon")`, NOT `NSWorkspace.shared.icon(forFile:)`. Icon Services caches by bundle path and the DerivedData path is reused across rebuilds, so `icon(forFile:)` serves a stale tile — regenerated artwork never shows. `NSImage(named:)` reads the freshly-compiled `Assets.car` directly.
