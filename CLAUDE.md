@@ -46,6 +46,7 @@ The app must build and `swift test` must stay green after every change.
 
 - `agtUITests/` is an XCUITest target that launches the real app and drives the sidebar (rename, close, move, drag, add-session) through the accessibility API — the coverage the host-free `agtCore` unit tests can't provide. Run with `xcodebuild test -project agt.xcodeproj -scheme agt -destination 'platform=macOS'`.
 - Tests pass `AGT_STATE_DIR` (a temp dir) via launch environment to isolate persistence; the app honors it in `agtApp.restoredStore()`. The native `Open Directory…` panel is system UI, verified manually rather than in XCUITest.
+- **Test cadence**: during iteration run only the relevant target/case (e.g. `xcodebuild test … -only-testing:agtUITests/GitStatusUITests`, or a single method like `…/GitStatusUITests/testCleanShowsNoToken`) — the full suite is ~75 s and needlessly re-runs unaffected tests (the sidebar tests don't change when only the status bar does). Run the complete suite (`cd agtCore && swift test` + all `agtUITests`) only as the pre-commit gate.
 
 ## libghostty gotchas
 
