@@ -16,6 +16,7 @@ struct ContentView: View {
     let makeSplitSurface: (Session) -> GhosttySurfaceView
     let quickTerminal: QuickTerminalController
     let actions: AppActions
+    let palette: PaletteController
 
     var body: some View {
         NavigationSplitView {
@@ -52,9 +53,15 @@ struct ContentView: View {
         // the quick terminal: an in-app overlay above the whole split view (sidebar + terminal),
         // so it covers everything but the title bar (the toolbar button stays reachable to toggle).
         .overlay { quickTerminalOverlay }
+        // the command palettes (actions / sessions): a top-centered overlay above everything.
+        .overlay { commandPaletteOverlay }
         // when the quick terminal hides, return focus to the active session's terminal.
         .onChange(of: quickTerminal.isVisible) { _, visible in
             if !visible { actions.focusActiveSession() }
+        }
+        // when a palette closes, return focus to the active session's terminal.
+        .onChange(of: palette.mode == nil) { _, closed in
+            if closed { actions.focusActiveSession() }
         }
         // blend the title bar with the terminal; surface the window un-minimized on launch.
         // the title token makes updateNSView re-run the blend on a session switch.
@@ -178,6 +185,14 @@ struct ContentView: View {
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
             }
+        }
+    }
+
+    /// The command-palette overlay, mounted only while a palette is open. Its content (search
+    /// field + result list) is rebuilt from `palette.mode`.
+    @ViewBuilder private var commandPaletteOverlay: some View {
+        if palette.mode != nil {
+            CommandPalette(controller: palette, actions: actions)
         }
     }
 

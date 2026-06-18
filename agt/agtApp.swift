@@ -10,6 +10,7 @@ struct agtApp: App {
     @State private var store: AppStore
     @State private var gitStatusService: GitStatusService
     @State private var actions: AppActions
+    @State private var palette = PaletteController()
 
     init() {
         let store = agtApp.restoredStore()
@@ -25,7 +26,8 @@ struct agtApp: App {
                 makeSurface: { Self.makeSurface(for: $0, store: store, service: gitStatusService) },
                 makeSplitSurface: { Self.makeSplitSurface(for: $0, store: store) },
                 quickTerminal: QuickTerminalController.shared,
-                actions: actions
+                actions: actions,
+                palette: palette
             )
                 .frame(minWidth: 640, minHeight: 400)
                 .task {
@@ -61,6 +63,10 @@ struct agtApp: App {
             }
             CommandGroup(after: .newItem) {
                 Divider()
+                Button("Rename Session") { actions.renameActiveSession() }
+                    .disabled(store.activeSession == nil)
+                Button("Rename Workspace") { actions.renameActiveWorkspace() }
+                    .disabled(store.currentWorkspaceID == nil)
                 Button("Close Session") {
                     if store.activeSession != nil { actions.closeActiveSession() }
                     else { NSApp.keyWindow?.performClose(nil) }
@@ -76,6 +82,10 @@ struct agtApp: App {
                 .disabled(store.activeSession == nil)
                 Button("Quick Terminal") { QuickTerminalController.shared.toggle() }
                     .keyboardShortcut("`", modifiers: .control)
+                Button("Go to Session") { palette.toggle(.sessions) }
+                    .keyboardShortcut("p", modifiers: .control)
+                Button("Command Palette") { palette.toggle(.actions) }
+                    .keyboardShortcut("p", modifiers: [.control, .shift])
             }
             // View: font zoom (drives ghostty on the focused terminal) + the status-bar toggle.
             CommandGroup(after: .toolbar) {

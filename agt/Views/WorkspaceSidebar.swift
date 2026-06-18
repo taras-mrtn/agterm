@@ -149,6 +149,26 @@ struct WorkspaceSidebar: NSViewRepresentable {
 
         init(store: AppStore) {
             self.store = store
+            super.init()
+            // the menu/palette can't reach the inline editor directly, so they post a
+            // notification and this coordinator starts the edit on the selected row.
+            NotificationCenter.default.addObserver(self, selector: #selector(beginRenameSessionNotified),
+                                                   name: .agtBeginRenameSession, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(beginRenameWorkspaceNotified),
+                                                   name: .agtBeginRenameWorkspace, object: nil)
+        }
+
+        deinit { NotificationCenter.default.removeObserver(self) }
+
+        @objc private func beginRenameSessionNotified() {
+            guard let id = store.selectedSessionID, let node = nodeCache[id] else { return }
+            // async so the edit starts after any palette overlay closes and the row is on screen.
+            DispatchQueue.main.async { [weak self] in self?.beginEditing(node: node) }
+        }
+
+        @objc private func beginRenameWorkspaceNotified() {
+            guard let id = store.currentWorkspaceID, let node = nodeCache[id] else { return }
+            DispatchQueue.main.async { [weak self] in self?.beginEditing(node: node) }
         }
 
         // MARK: - Model rebuild
@@ -684,4 +704,11 @@ final class SidebarOutlineView: NSOutlineView {
         // (model state); only first responder moves. skipped mid-rename by the coordinator.
         (delegate as? WorkspaceSidebar.Coordinator)?.focusActiveTerminal()
     }
+}
+
+extension Notification.Name {
+    /// Posted by the menu/palette to start an inline rename of the active session or its
+    /// workspace; `WorkspaceSidebar.Coordinator` observes these and begins editing the row.
+    static let agtBeginRenameSession = Notification.Name("agt.beginRenameSession")
+    static let agtBeginRenameWorkspace = Notification.Name("agt.beginRenameWorkspace")
 }

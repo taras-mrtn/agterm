@@ -12,6 +12,10 @@ import AppKit
 final class AppActions {
     private let store: AppStore
 
+    /// Set briefly while a rename is being started, so the focus-restore that runs when a palette
+    /// or the quick terminal closes doesn't steal first responder from the inline rename field.
+    private var renamePending = false
+
     init(store: AppStore) {
         self.store = store
     }
@@ -49,6 +53,78 @@ final class AppActions {
         store.closeSession(id)
     }
 
+    func toggleStatusBar() {
+        store.setStatusBarHidden(!store.statusBarHidden)
+    }
+
+    /// Move a session to another workspace (used by the palette's "Move Session to …" items).
+    func moveSession(_ sessionID: UUID, toWorkspace workspaceID: UUID) {
+        store.moveSession(sessionID, toWorkspace: workspaceID)
+    }
+
+    // MARK: - Inline rename
+
+    /// Start an inline rename of the active session. The sidebar owns the edit field, so this posts
+    /// a notification it observes; `renamePending` keeps the palette-close focus restore off the
+    /// field while the edit starts.
+    func renameActiveSession() {
+        guard store.activeSession != nil else { return }
+        renamePending = true
+        NotificationCenter.default.post(name: .agtBeginRenameSession, object: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.renamePending = false }
+    }
+
+    /// Start an inline rename of the active session's workspace (the same one new sessions land in).
+    func renameActiveWorkspace() {
+        guard store.currentWorkspaceID != nil else { return }
+        renamePending = true
+        NotificationCenter.default.post(name: .agtBeginRenameWorkspace, object: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.renamePending = false }
+    }
+
+    // MARK: - Command palettes
+
+    /// The app's commands as palette items, sharing the same logic as the menu/buttons. Includes a
+    /// "Move Session to …" item per other workspace (when there's an active session to move).
+    func paletteActions() -> [PaletteItem] {
+        var items: [PaletteItem] = [
+            PaletteItem(title: "New Session") { [weak self] in self?.newSession() },
+            PaletteItem(title: "New Workspace") { [weak self] in self?.newWorkspace() },
+            PaletteItem(title: "Open Directory…") { [weak self] in self?.openDirectory() },
+            PaletteItem(title: "Rename Session") { [weak self] in self?.renameActiveSession() },
+            PaletteItem(title: "Rename Workspace") { [weak self] in self?.renameActiveWorkspace() },
+            PaletteItem(title: "Close Session") { [weak self] in self?.closeActiveSession() },
+            PaletteItem(title: "Toggle Split") { [weak self] in self?.toggleSplit() },
+            PaletteItem(title: "Quick Terminal") { QuickTerminalController.shared.toggle() },
+            PaletteItem(title: "Increase Font Size") { [weak self] in self?.increaseFontSize() },
+            PaletteItem(title: "Decrease Font Size") { [weak self] in self?.decreaseFontSize() },
+            PaletteItem(title: "Actual Font Size") { [weak self] in self?.resetFontSize() },
+            PaletteItem(title: "Toggle Status Bar") { [weak self] in self?.toggleStatusBar() },
+        ]
+        if let current = store.currentWorkspaceID, let sessionID = store.selectedSessionID {
+            for workspace in store.workspaces where workspace.id != current {
+                let target = workspace.id
+                items.append(PaletteItem(id: "move-\(target)", title: "Move Session to \(workspace.name)") { [weak self] in
+                    self?.moveSession(sessionID, toWorkspace: target)
+                })
+            }
+        }
+        return items
+    }
+
+    /// Every open session across workspaces as palette items; choosing one selects it.
+    func paletteSessions() -> [PaletteItem] {
+        let store = self.store
+        return store.workspaces.flatMap { workspace in
+            workspace.sessions.map { session in
+                let id = session.id
+                return PaletteItem(id: id.uuidString, title: session.displayName, subtitle: session.effectiveCwd) {
+                    store.selectSession(id)
+                }
+            }
+        }
+    }
+
     // MARK: - Split
 
     func toggleSplit() {
@@ -66,8 +142,11 @@ final class AppActions {
     // MARK: - Focus
 
     /// Move first responder back to the active session's primary terminal (used after the quick
-    /// terminal hides). Re-asserts briefly since the target view may not be on-window yet.
+    /// terminal or a palette closes). Re-asserts briefly since the target view may not be on-window
+    /// yet. Bails while the quick terminal is up — it owns focus, so don't steal it back.
     func focusActiveSession(attempt: Int = 0) {
+        if renamePending { return }
+        if QuickTerminalController.shared.isVisible { return }
         if let view = store.activeSession?.surface as? GhosttySurfaceView, let window = view.window {
             window.makeFirstResponder(view)
         }
