@@ -262,9 +262,13 @@ private struct WindowAccessor: NSViewRepresentable {
             // AppKit rebuilds the titlebar subviews on key/main/fullscreen transitions
             // (becomeKey fires right at launch), undoing the cleared layer — re-apply.
             for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification, NSWindow.didExitFullScreenNotification] {
-                let token = NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                    guard let self, let window = self.window else { return }
-                    self.applyTitlebarBlend(window)
+                // the observer block is @Sendable, so it must not touch main-actor state
+                // directly; hop through DispatchQueue.main like the re-applies above.
+                let token = NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { _ in
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, let window = self.window else { return }
+                        self.applyTitlebarBlend(window)
+                    }
                 }
                 titlebarObservers.append(token)
             }
