@@ -112,13 +112,16 @@ final class AppActions {
         return items
     }
 
-    /// Every open session across workspaces as palette items; choosing one selects it.
+    /// Every open session across workspaces as palette items; choosing one selects it. The
+    /// subtitle leads with the owning workspace (so you can tell sessions of the same name apart,
+    /// and search by workspace) followed by the working directory.
     func paletteSessions() -> [PaletteItem] {
         let store = self.store
         return store.workspaces.flatMap { workspace in
             workspace.sessions.map { session in
                 let id = session.id
-                return PaletteItem(id: id.uuidString, title: session.displayName, subtitle: session.effectiveCwd) {
+                let subtitle = "\(workspace.name) · \(session.effectiveCwd)"
+                return PaletteItem(id: id.uuidString, title: session.displayName, subtitle: subtitle) {
                     store.selectSession(id)
                 }
             }
