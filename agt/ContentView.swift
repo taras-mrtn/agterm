@@ -159,6 +159,9 @@ private struct WindowContentView: View {
     /// state and used as the quick terminal's opaque backing, so a settings theme change (posting
     /// `.agtAppearanceChanged`) re-renders it live.
     @State private var terminalColor: Color = WindowContentView.resolvedTerminalColor()
+    /// Mirror of `GhosttyApp.compactToolbar`: when true the cwd subtitle is dropped so the title bar
+    /// collapses to a single line. Refreshed on `.agtAppearanceChanged`, like `terminalColor`.
+    @State private var compactToolbar: Bool = WindowContentView.resolvedCompactToolbar()
     /// Sidebar column visibility — only consulted on the isolated-UI-test path (see `splitRoot`),
     /// where it is pinned to `.doubleColumn`. Production never binds it, so its persisted collapse is
     /// untouched.
@@ -205,6 +208,7 @@ private struct WindowContentView: View {
         // notification to pick up the new terminal color in the quick terminal backing.
         .onReceive(NotificationCenter.default.publisher(for: .agtAppearanceChanged)) { _ in
             terminalColor = WindowContentView.resolvedTerminalColor()
+            compactToolbar = WindowContentView.resolvedCompactToolbar()
         }
         // blend the title bar with the terminal; report frontmost/close to the library; surface the
         // window un-minimized on launch. the title token makes updateNSView re-run the blend on a
@@ -318,6 +322,12 @@ private struct WindowContentView: View {
             ?? NSColor(srgbRed: 0.157, green: 0.173, blue: 0.204, alpha: 1))
     }
 
+    /// The compact-toolbar flag from the (non-observable) `GhosttyApp`, mirrored into view state so a
+    /// settings change (posting `.agtAppearanceChanged`) drops/restores the cwd subtitle live.
+    private static func resolvedCompactToolbar() -> Bool {
+        GhosttyApp.shared.compactToolbar
+    }
+
     /// The titlebar title (first line): the active session's display name, suffixed with the window
     /// name as "session — window" when the window has a custom (user-set) name, so a renamed window
     /// is identifiable at a glance. Auto "window N" names are omitted. "agt" when nothing is selected.
@@ -329,9 +339,10 @@ private struct WindowContentView: View {
         return "\(session) — \(info.name)"
     }
 
-    /// The titlebar subtitle (second line): the active session's working directory.
+    /// The titlebar subtitle (second line): the active session's working directory. Dropped in
+    /// compact mode so the title bar is a single short row.
     private var windowSubtitle: String {
-        store.activeSession?.effectiveCwd ?? ""
+        compactToolbar ? "" : (store.activeSession?.effectiveCwd ?? "")
     }
 
     /// Toolbar button (right of the title bar) that toggles the active session's one-level
@@ -701,8 +712,9 @@ private struct WindowAccessor: NSViewRepresentable {
             let background = GhosttyApp.shared.terminalBackgroundColor
                 ?? NSColor(srgbRed: 0.157, green: 0.173, blue: 0.204, alpha: 1)
             WindowAppearance.sync(window: window, background: background,
-                                  opacity: GhosttyApp.shared.windowOpacity,
-                                  blurRadius: GhosttyApp.shared.windowBlurRadius)
+                                  chrome: .init(opacity: GhosttyApp.shared.windowOpacity,
+                                                blurRadius: GhosttyApp.shared.windowBlurRadius,
+                                                compactToolbar: GhosttyApp.shared.compactToolbar))
         }
     }
 }

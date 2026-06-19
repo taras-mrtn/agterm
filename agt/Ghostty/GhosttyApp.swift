@@ -24,6 +24,9 @@ final class GhosttyApp {
     /// `WindowAppearance.sync` reads these, `SettingsModel` writes them. Defaults are opaque.
     private(set) var windowOpacity: Double = 1
     private(set) var windowBlurRadius: Int = 0
+    /// Whether the window chrome uses the compact title bar (single short row, smaller icons, no
+    /// subtitle). NOT ghostty-resolved: `WindowAppearance.sync` reads it, `SettingsModel` writes it.
+    private(set) var compactToolbar: Bool = false
     private var tickTimer: Timer?
     let callbacks = GhosttyCallbacks()
     private var resourcesDir: String?
@@ -82,6 +85,12 @@ final class GhosttyApp {
     func setWindowTranslucency(opacity: Double, blurRadius: Int) {
         windowOpacity = opacity
         windowBlurRadius = blurRadius
+    }
+
+    /// Set whether the window chrome uses the compact title bar. Called by `SettingsModel` at launch
+    /// and on every change; the window re-sync rides the `.agtAppearanceChanged` notification.
+    func setCompactToolbar(_ enabled: Bool) {
+        compactToolbar = enabled
     }
 
     // MARK: - Config

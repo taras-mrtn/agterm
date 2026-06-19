@@ -20,10 +20,11 @@ final class SettingsModel {
         self.library = library
         self.settingsStore = settingsStore
         self.settings = settingsStore.load()
-        // mirror the persisted window translucency + notification toggle into their shared channels
-        // at launch, before any settings change fires.
+        // mirror the persisted window translucency + notification toggle + compact toolbar into
+        // their shared channels at launch, before any settings change fires.
         applyWindowTranslucency()
         applyNotificationsEnabled()
+        applyCompactToolbar()
     }
 
     func setFontFamily(_ value: String?) { settings.fontFamily = value; persistAndApply() }
@@ -32,6 +33,7 @@ final class SettingsModel {
     func setBackgroundOpacity(_ value: Double?) { settings.backgroundOpacity = value; persistAndApply() }
     func setBackgroundBlur(_ value: Int?) { settings.backgroundBlur = value; persistAndApply() }
     func setNotificationsEnabled(_ value: Bool?) { settings.notificationsEnabled = value; persistAndApply() }
+    func setCompactToolbar(_ value: Bool?) { settings.compactToolbar = value; persistAndApply() }
 
     private func persistAndApply() {
         try? settingsStore.save(settings)
@@ -48,8 +50,10 @@ final class SettingsModel {
         }
         applyWindowTranslucency()
         applyNotificationsEnabled()
-        // refresh the app chrome (title bar + sidebar + quick terminal) with the new terminal color
-        // and window translucency immediately, rather than only when the window next re-keys.
+        applyCompactToolbar()
+        // refresh the app chrome (title bar + sidebar + quick terminal) with the new terminal color,
+        // window translucency, and toolbar style immediately, rather than only when the window next
+        // re-keys. The title-bar re-sync and the cwd-subtitle drop both ride this notification.
         NotificationCenter.default.post(name: .agtAppearanceChanged, object: nil)
     }
 
@@ -60,6 +64,10 @@ final class SettingsModel {
 
     private func applyNotificationsEnabled() {
         NotificationManager.shared.bannersEnabled = settings.notificationsEnabled ?? true
+    }
+
+    private func applyCompactToolbar() {
+        GhosttyApp.shared.setCompactToolbar(settings.compactToolbar ?? false)
     }
 
     /// Write the ghostty config lines (font/size/theme + the translucency pins) to the file

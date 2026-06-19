@@ -25,15 +25,22 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// default (on). Only gates the OS banner — the sidebar unseen-count badge tracks notifications
     /// either way.
     public var notificationsEnabled: Bool?
+    /// Whether the window uses the compact title bar (a single short row with smaller icons) instead
+    /// of the tall default that stacks the session name over the working-directory subtitle. nil
+    /// means the default (off). Applied at the AppKit window level, NOT a ghostty key; in compact
+    /// mode the cwd subtitle is dropped so the bar is a single line.
+    public var compactToolbar: Bool?
 
     public init(fontFamily: String? = nil, fontSize: Double? = nil, theme: String? = nil,
-                backgroundOpacity: Double? = nil, backgroundBlur: Int? = nil, notificationsEnabled: Bool? = nil) {
+                backgroundOpacity: Double? = nil, backgroundBlur: Int? = nil, notificationsEnabled: Bool? = nil,
+                compactToolbar: Bool? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.theme = theme
         self.backgroundOpacity = backgroundOpacity
         self.backgroundBlur = backgroundBlur
         self.notificationsEnabled = notificationsEnabled
+        self.compactToolbar = compactToolbar
     }
 
     /// The ghostty config lines for the set fields, one `key = value` per line, suitable for a

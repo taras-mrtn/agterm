@@ -46,7 +46,8 @@ private struct GeneralSettingsView: View {
 }
 
 /// Appearance tab: a Terminal section (font family, default font size, theme) and a Window section
-/// (background opacity + blur). Each control persists and live-applies through `SettingsModel`.
+/// (compact toolbar, background opacity + blur). Each control persists and live-applies through
+/// `SettingsModel`.
 private struct AppearanceSettingsView: View {
     let model: SettingsModel
     private let themes = SettingsCatalog.themeNames()
@@ -74,6 +75,12 @@ private struct AppearanceSettingsView: View {
             }
 
             Section("Window") {
+                Toggle("Compact toolbar", isOn: compactToolbar)
+                    .accessibilityIdentifier("settings-compact-toolbar")
+                Text("A shorter title bar with smaller icons; hides the working-directory subtitle.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
                 HStack {
                     Text("Background Opacity")
                     Slider(value: backgroundOpacity, in: 0 ... 1)
@@ -124,6 +131,13 @@ private struct AppearanceSettingsView: View {
     private var backgroundBlur: Binding<Double> {
         Binding(get: { Double(model.settings.backgroundBlur ?? 0) },
                 set: { model.setBackgroundBlur($0 <= 0 ? nil : Int($0.rounded())) })
+    }
+
+    /// off (the default) maps to nil so settings.json stays minimal, matching the other appearance
+    /// controls' "unset = default" convention.
+    private var compactToolbar: Binding<Bool> {
+        Binding(get: { model.settings.compactToolbar ?? false },
+                set: { model.setCompactToolbar($0 ? true : nil) })
     }
 }
 

@@ -68,4 +68,11 @@ struct AppSettingsTests {
         // it's an app-level toggle, never a ghostty config key
         #expect(AppSettings(notificationsEnabled: false).ghosttyConfigLines().isEmpty)
     }
+
+    @Test func compactToolbarRoundTripsAndIsNotAConfigLine() throws {
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(AppSettings(compactToolbar: true)))
+        #expect(decoded.compactToolbar == true)
+        // window-chrome toggle applied at the AppKit level, never a ghostty config key
+        #expect(AppSettings(compactToolbar: true).ghosttyConfigLines().isEmpty)
+    }
 }

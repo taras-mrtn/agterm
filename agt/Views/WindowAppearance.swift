@@ -8,27 +8,39 @@ import AppKit
 /// window background (and the full-size content below it) show through continuously.
 @MainActor
 enum WindowAppearance {
-    /// Apply the blend to `window` using `background` (the terminal background color), at the given
-    /// window `opacity` (0...1) and CGS `blurRadius`. Idempotent; safe to re-apply on attach and on
-    /// every window/title/appearance update — AppKit rebuilds the titlebar subviews on key/main/
-    /// fullscreen transitions, so re-applying is required to keep the seam gone.
+    /// The window-chrome inputs composited at the AppKit level, read from the shared `GhosttyApp`
+    /// channels by `WindowAccessor.applyTitlebarBlend`. Defaults are the opaque, full-height look.
+    struct Chrome {
+        var opacity: Double = 1
+        var blurRadius: Int = 0
+        var compactToolbar: Bool = false
+    }
+
+    /// Apply the blend to `window` using `background` (the terminal background color) and the given
+    /// `chrome` inputs. Idempotent; safe to re-apply on attach and on every window/title/appearance
+    /// update — AppKit rebuilds the titlebar subviews (and re-asserts a default toolbar style) on
+    /// key/main/fullscreen transitions, so re-applying is required to keep the seam gone and the
+    /// chosen toolbar style stuck.
     ///
     /// At full opacity the window is opaque with a solid background (the original behavior). Below
     /// full opacity the window goes non-opaque and its background carries the alpha: the renderer is
     /// pinned transparent (see `AppSettings.ghosttyConfigLines`) and the chrome paints nothing, so
     /// the whole interior reads as one continuous translucent surface, optionally blurred.
-    static func sync(window: NSWindow, background: NSColor, opacity: Double, blurRadius: Int) {
+    static func sync(window: NSWindow, background: NSColor, chrome: Chrome) {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.styleMask.insert(.fullSizeContentView)
+        // compact: a single short title-bar row with smaller items; the tall default stacks the
+        // session name over the cwd subtitle (ContentView drops the subtitle in compact mode).
+        window.toolbarStyle = chrome.compactToolbar ? .unifiedCompact : .unified
 
         // native fullscreen draws its own opaque background and the chrome shows through any
         // transparency, so force opaque while fullscreened.
-        let transparent = opacity < 1 && !window.styleMask.contains(.fullScreen)
+        let transparent = chrome.opacity < 1 && !window.styleMask.contains(.fullScreen)
         if transparent {
             window.isOpaque = false
-            window.backgroundColor = background.withAlphaComponent(opacity)
-            setWindowBackgroundBlur(window, radius: blurRadius)
+            window.backgroundColor = background.withAlphaComponent(chrome.opacity)
+            setWindowBackgroundBlur(window, radius: chrome.blurRadius)
         } else {
             window.isOpaque = true
             window.backgroundColor = background
