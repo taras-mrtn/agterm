@@ -302,6 +302,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var scheduledReconciliationReasons: Set<String> = []
 
     func applicationWillFinishLaunching(_: Notification) {
+        // agt has its own multi-window model and does NOT support native window tabs; disabling
+        // automatic tabbing removes AppKit's injected "Show Tab Bar" / "Show All Tabs" / "Move Tab to
+        // New Window" menu items and the tab affordances. Must be set before any window is created.
+        NSWindow.allowsAutomaticWindowTabbing = false
         // a Debug app launched from DerivedData (ad-hoc signed) never hands the Dock a
         // non-default tile icon via the usual runtime path. set it explicitly. load the
         // artwork straight from the compiled asset catalog rather than via
