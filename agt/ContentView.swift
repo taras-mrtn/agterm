@@ -763,6 +763,11 @@ private struct WindowAccessor: NSViewRepresentable {
             bringForward(window)
             DispatchQueue.main.async { [weak self] in self?.bringForward(window) }
             scheduleUITestWindowForward(window)
+            // the window may already be key here: a reopened/raised window can become key DURING
+            // creation, before these observers were installed, so that initial didBecomeKey was missed
+            // (and bringForward above is then a no-op). Report frontmost explicitly so the palette /
+            // session switcher route to THIS window immediately, not the previously-frontmost one.
+            if window.isKeyWindow || window.isMainWindow { reportFrontmost(windowID) }
         }
 
         deinit {
