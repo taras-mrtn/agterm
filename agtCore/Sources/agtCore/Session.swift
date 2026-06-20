@@ -20,6 +20,12 @@ public final class Session: Identifiable {
     public var currentCwd: String?
     public let initialCwd: String
 
+    /// The terminal title from the latest OSC 0/1/2 set-title report — set by a shell
+    /// `PROMPT_COMMAND`, ghostty's shell integration, or a remote host over SSH. Observed, so the
+    /// sidebar row refreshes when it changes. Ephemeral like `currentCwd`/`unseenCount`:
+    /// `SessionSnapshot` doesn't capture it, and a bare prompt redraw doesn't trigger a save.
+    public var oscTitle: String?
+
     /// Count of unseen terminal notifications fired by this session's panes while it wasn't focused.
     /// Observed, so the sidebar badge reacts. Ephemeral: `SessionSnapshot` doesn't capture it, so it
     /// never survives a relaunch.
@@ -78,19 +84,21 @@ public final class Session: Identifiable {
         self.customName = customName
     }
 
-    /// The sidebar label: a non-blank `customName` wins; otherwise the basename
-    /// of the live cwd (falling back to `initialCwd`).
+    /// The sidebar label: a non-blank `customName` (a manual rename) wins; otherwise a non-blank
+    /// `oscTitle` (the terminal title the shell or a remote host set); otherwise the basename of the
+    /// live cwd (falling back to `initialCwd`).
     ///
-    /// `customName` is trimmed before use, so a whitespace-only value falls back
-    /// to the basename — matching `AppStore.renameSession`, which clears a blank
-    /// name to nil. (A whitespace-only `customName` can only reach here via a
-    /// hand-edited snapshot; `renameSession` never stores one.)
+    /// `customName` and `oscTitle` are both trimmed before use, so a whitespace-only value falls
+    /// through to the next source — matching `AppStore.renameSession`, which clears a blank name to
+    /// nil. (A whitespace-only `customName` can only reach here via a hand-edited snapshot;
+    /// `renameSession` never stores one.)
     ///
     /// Basename pins: root `/` → `/` (`lastPathComponent` already returns this);
     /// a trailing slash is ignored (`/a/b/` → `b`); an empty path → `~` (no
     /// sensible component exists, so we show the home shorthand).
     public var displayName: String {
         if let trimmed = customName?.trimmedOrNil { return trimmed }
+        if let title = oscTitle?.trimmedOrNil { return title }
         let path = currentCwd ?? initialCwd
         if path.isEmpty { return "~" }
         return (path as NSString).lastPathComponent

@@ -57,6 +57,36 @@ struct SessionTests {
         #expect(session.displayName == "build")
     }
 
+    @Test func oscTitleOverridesCwd() {
+        // no manual rename: the terminal title (e.g. a remote host over SSH) wins over the cwd basename.
+        let session = Session(initialCwd: "/Users/umputun/dev/foo")
+        #expect(session.displayName == "foo")
+        session.oscTitle = "umputun@web1: ~/srv"
+        #expect(session.displayName == "umputun@web1: ~/srv")
+    }
+
+    @Test func customNameOverridesOscTitle() {
+        // a manual rename outranks the terminal title.
+        let session = Session(initialCwd: "/Users/umputun/dev/foo", customName: "build")
+        session.oscTitle = "umputun@web1: ~/srv"
+        #expect(session.displayName == "build")
+    }
+
+    @Test func blankOscTitleFallsBackToCwd() {
+        // a whitespace-only or empty title is trimmed and falls through to the cwd basename.
+        let session = Session(initialCwd: "/Users/umputun/dev/foo")
+        session.oscTitle = "   \t"
+        #expect(session.displayName == "foo")
+        session.oscTitle = ""
+        #expect(session.displayName == "foo")
+    }
+
+    @Test func paddedOscTitleDisplaysTrimmed() {
+        let session = Session(initialCwd: "/Users/umputun/dev/foo")
+        session.oscTitle = "  web1  "
+        #expect(session.displayName == "web1")
+    }
+
     @Test func effectiveCwdFallsBackToInitialUntilPwdReport() {
         // a restored session has no currentCwd until OSC 7 arrives; effectiveCwd is
         // initialCwd so git status refreshes immediately on launch/select.

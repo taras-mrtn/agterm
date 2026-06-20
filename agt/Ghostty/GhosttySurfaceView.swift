@@ -139,6 +139,13 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         session?.currentCwd = pwd
     }
 
+    func applyTitle(_ title: String) {
+        // Already on the main actor (the callback hops via DispatchQueue.main.async).
+        // `oscTitle` is observed, so the sidebar row and window title refresh live. Like applyPwd,
+        // this deliberately does NOT save(): OSC set-title re-fires on every prompt redraw.
+        session?.oscTitle = title
+    }
+
     func handleProcessExit() {
         // Already on the main actor (the close callbacks hop via DispatchQueue.main.async). Ask the app
         // to close the owning session/overlay, which tears down this surface and removes its sidebar row.

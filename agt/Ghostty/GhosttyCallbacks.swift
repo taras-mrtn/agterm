@@ -22,6 +22,14 @@ final class GhosttyCallbacks: @unchecked Sendable {
             let pwd = String(cString: ptr)
             DispatchQueue.main.async { view.applyPwd(pwd) }
             return true
+        case GHOSTTY_ACTION_SET_TITLE:
+            // the shell or a program set the terminal title (OSC 0/1/2 — often from a PROMPT_COMMAND
+            // or a remote host over SSH). recover the surface, copy the title out of the C string,
+            // and apply it to the session; displayName prefers it over the cwd basename.
+            guard let view = surfaceView(from: target), let ptr = action.action.set_title.title else { return true }
+            let title = String(cString: ptr)
+            DispatchQueue.main.async { view.applyTitle(title) }
+            return true
         case GHOSTTY_ACTION_CELL_SIZE:
             // fires when the cell pixel size changes (font-size change via cmd +/-, or DPI
             // change). used only as a trigger: the view reads the live font size and the app
