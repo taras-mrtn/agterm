@@ -82,6 +82,26 @@ targets:
         OTHER_SWIFT_FLAGS:
           - "-Xcc"
           - "-Wno-incomplete-umbrella"
+    postBuildScripts:
+      # build the agtermctl CLI and bundle it at Contents/MacOS/agtermctl so the
+      # in-app "Install Command Line Tool" can symlink it into PATH. Runs before
+      # Xcode's automatic code-sign, and signs the helper ad-hoc (matching the
+      # app) so the app's signature seals an already-signed nested binary.
+      - name: Bundle agtermctl CLI
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          core="$SRCROOT/agtermCore"
+          swift build --package-path "$core" -c release --product agtermctl
+          src="$(swift build --package-path "$core" -c release --product agtermctl --show-bin-path)/agtermctl"
+          dest="$CODESIGNING_FOLDER_PATH/Contents/MacOS/agtermctl"
+          mkdir -p "$(dirname "$dest")"
+          cp -f "$src" "$dest"
+          codesign --force --options runtime --sign - "$dest"
+          # re-seal the whole app: this phase can run AFTER Xcode's own code-sign on
+          # incremental builds, so adding the helper would otherwise break the seal. --deep
+          # re-signs every nested Mach-O too (the Debug agterm.debug.dylib, the helper).
+          codesign --force --deep --options runtime --entitlements "$SRCROOT/agterm/agterm.entitlements" --sign - "$CODESIGNING_FOLDER_PATH"
     dependencies:
       - framework: GhosttyKit.xcframework
         embed: false

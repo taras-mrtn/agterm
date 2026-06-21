@@ -59,6 +59,15 @@ final class MenuUITests: XCTestCase {
         XCTAssertGreaterThan(increased, baseline)
     }
 
+    func testHelpMenuOffersInstallCLI() throws {
+        XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForExistence(timeout: 20), "seeded session should exist")
+        app.menuBars.menuBarItems["Help"].click()
+        let item = app.menuItems["Install Command Line Tool…"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "Help menu should offer Install Command Line Tool")
+        // don't click it — that would perform a real /usr/local/bin symlink (and maybe an admin prompt).
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
     private func pollFontSize(where predicate: (Double) -> Bool = { _ in true }, timeout: TimeInterval) -> Double? {
         let file = stateDir.windowSnapshotFile()
         let deadline = Date().addingTimeInterval(timeout)

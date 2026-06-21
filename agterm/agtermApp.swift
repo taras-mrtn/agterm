@@ -178,6 +178,9 @@ struct agtermApp: App {
                 Button { palette.toggle(.actions) } label: { Label("Command Palette", systemImage: "command") }
                     .keyboardShortcut("p", modifiers: [.control, .shift])
             }
+            CommandGroup(replacing: .help) {
+                Button("Install Command Line Tool…") { CLIInstaller.run() }
+            }
         }
 
         Settings {
