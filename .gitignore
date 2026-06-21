@@ -1,18 +1,18 @@
 # downloaded prebuilt libghostty (never committed — see scripts/setup.sh)
 GhosttyKit.xcframework/
-agt/Resources/ghostty/
-agt/Resources/terminfo/
+agterm/Resources/ghostty/
+agterm/Resources/terminfo/
 *.tar.gz
 
 # build artifacts
 build/
 .build/
-agt.xcodeproj/
+agterm.xcodeproj/
 .swiftpm/
 
 .DS_Store
 
-# app state / runtime files (only appear if AGT_STATE_DIR is pointed at the repo)
+# app state / runtime files (only appear if AGTERM_STATE_DIR is pointed at the repo)
 settings.json
 windows.json
 workspaces.json

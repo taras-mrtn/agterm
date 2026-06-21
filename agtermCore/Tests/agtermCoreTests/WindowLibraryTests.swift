@@ -1,0 +1,661 @@
+import Foundation
+import Testing
+@testable import agtermCore
+
+/// Class suite (reference type) so `init`/`deinit` create and tear down a unique temp state
+/// directory around each test — no shared on-disk state, no Application Support pollution.
+/// `WindowLibrary` is `@MainActor`, so the suite is too.
+@MainActor
+final class WindowLibraryTests {
+    private let directory: URL
+
+    init() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("agterm-windows-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private var indexURL: URL { directory.appendingPathComponent("windows.json") }
+    private var legacyURL: URL { directory.appendingPathComponent("workspaces.json") }
+    private func windowFileURL(_ id: UUID) -> URL {
+        directory.appendingPathComponent("windows").appendingPathComponent("\(id.uuidString).json")
+    }
+
+    private func writeIndex(_ index: WindowsIndex) throws {
+        let data = try JSONEncoder().encode(index)
+        try data.write(to: indexURL)
+    }
+
+    private func writeWindowFile(_ id: UUID, _ snapshot: Snapshot) throws {
+        let store = PersistenceStore(directory: directory.appendingPathComponent("windows"), fileName: "\(id.uuidString).json")
+        try store.save(snapshot)
+    }
+
+    // MARK: - Seeding
+
+    @Test func freshLibrarySeedsOneWindowWithDefaultTree() {
+        let library = WindowLibrary(directory: directory)
+        #expect(library.windows.count == 1)
+        #expect(library.windows[0].name == "window 1")
+        let store = try! #require(library.store(for: library.windows[0].id))
+        #expect(store.workspaces.count == 1)
+        #expect(store.workspaces[0].name == "workspace 1")
+        #expect(store.workspaces[0].sessions.count == 1)
+        #expect(library.openIDs() == [library.windows[0].id])
+    }
+
+    @Test func defaultWindowNameCountsUp() {
+        let library = WindowLibrary(directory: directory)
+        #expect(library.defaultWindowName == "window 2")
+        library.newWindow()
+        #expect(library.defaultWindowName == "window 3")
+    }
+
+    @Test func windowInfoDistinguishesAutoFromCustomNames() {
+        // auto-assigned "window N" → not custom (omitted from the title bar)
+        #expect(WindowInfo(name: "window 1").hasCustomName == false)
+        #expect(WindowInfo(name: "window 12").hasCustomName == false)
+        #expect(WindowInfo.isAutoName("window 1"))
+        // user-set names → custom
+        #expect(WindowInfo(name: "work").hasCustomName)
+        #expect(WindowInfo(name: "window").hasCustomName)        // no number
+        #expect(WindowInfo(name: "window 0").hasCustomName)      // number must be >= 1
+        #expect(WindowInfo(name: "Window 1").hasCustomName)      // case-sensitive vs the auto scheme
+        #expect(WindowInfo(name: "my window 2").hasCustomName)   // extra words
+    }
+
+    // MARK: - Add / list / rename / delete
+
+    @Test func newWindowAppendsOpensAndSeeds() {
+        let library = WindowLibrary(directory: directory)
+        let info = library.newWindow(name: "work")
+        #expect(library.windows.map(\.name).contains("work"))
+        #expect(library.isOpen(info.id))
+        let store = try! #require(library.store(for: info.id))
+        #expect(store.workspaces.count == 1)
+        #expect(store.workspaces[0].sessions.count == 1)
+    }
+
+    @Test func newWindowBecomesFrontmostAndActive() {
+        let library = WindowLibrary(directory: directory)
+        let first = library.windows[0].id
+        let info = library.newWindow(name: "work")
+        // a new window is the active one immediately — the palette / quick terminal key off this, so
+        // they target the new window without waiting on its first didBecomeKey.
+        #expect(info.id != first)
+        #expect(library.frontmostWindowID == info.id)
+        #expect(library.activeWindowID == info.id)
+    }
+
+    @Test func newWindowBlankNameFallsBackToDefault() {
+        let library = WindowLibrary(directory: directory)
+        let info = library.newWindow(name: "   ")
+        #expect(info.name == "window 2")
+    }
+
+    @Test func renameWindowUpdatesNameAndIgnoresBlank() {
+        let library = WindowLibrary(directory: directory)
+        let id = library.windows[0].id
+        library.renameWindow(id, to: "personal")
+        #expect(library.windows[0].name == "personal")
+        library.renameWindow(id, to: "  ")
+        #expect(library.windows[0].name == "personal")
+    }
+
+    @Test func removeWindowDropsEntryStoreAndFile() throws {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra")
+        #expect(FileManager.default.fileExists(atPath: windowFileURL(extra.id).path))
+        library.removeWindow(extra.id)
+        #expect(!library.windows.contains { $0.id == extra.id })
+        #expect(library.store(for: extra.id) == nil)
+        #expect(!FileManager.default.fileExists(atPath: windowFileURL(extra.id).path))
+    }
+
+    @Test func removeWindowKeepsAtLeastOne() {
+        let library = WindowLibrary(directory: directory)
+        #expect(!library.canRemoveWindow)
+        let only = library.windows[0].id
+        library.removeWindow(only)
+        #expect(library.windows.count == 1)
+        #expect(library.windows[0].id == only)
+    }
+
+    @Test func removeWindowClearsFrontmostWhenItMatches() {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra")
+        library.frontmostWindowID = extra.id
+        library.removeWindow(extra.id)
+        #expect(library.frontmostWindowID == nil)
+    }
+
+    // MARK: - Open-set / frontmost / close
+
+    @Test func closeWindowMarksClosedButKeepsEntry() {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra")
+        #expect(library.isOpen(extra.id))
+        library.closeWindow(extra.id)
+        #expect(!library.isOpen(extra.id))
+        #expect(library.windows.contains { $0.id == extra.id })
+        #expect(library.openIDs() == [library.windows[0].id])
+    }
+
+    @Test func closeUnknownWindowIsNoOp() {
+        let library = WindowLibrary(directory: directory)
+        let before = library.openIDs()
+        library.closeWindow(UUID())
+        #expect(library.openIDs() == before)
+    }
+
+    @Test func closeWindowIsNoOpWhileTerminating() {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra")
+        library.isTerminating = true
+        // during quit the open-set must survive for the next launch's reopen-all.
+        library.closeWindow(extra.id)
+        #expect(library.isOpen(extra.id))
+    }
+
+    @Test func loadStoreReopensAClosedWindow() {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra")
+        library.closeWindow(extra.id)
+        let store = try! #require(library.loadStore(for: extra.id))
+        #expect(library.isOpen(extra.id))
+        #expect(store.workspaces.count == 1)
+    }
+
+    @Test func loadStoreUnknownIdReturnsNil() {
+        let library = WindowLibrary(directory: directory)
+        #expect(library.loadStore(for: UUID()) == nil)
+    }
+
+    @Test func frontmostTrackingPersistsThroughIndex() {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra")
+        library.frontmostWindowID = extra.id
+        library.saveIndex()
+        let reloaded = WindowLibrary(directory: directory)
+        #expect(reloaded.frontmostWindowID == extra.id)
+    }
+
+    // MARK: - Cross-window session lookup
+
+    @Test func storeForSessionFindsOwningOpenWindow() throws {
+        let library = WindowLibrary(directory: directory)
+        let a = library.windows[0]
+        let b = library.newWindow(name: "b")
+        let storeA = try #require(library.store(for: a.id))
+        let storeB = try #require(library.store(for: b.id))
+        let sessionA = try #require(storeA.workspaces.first?.sessions.first)
+        let sessionB = try #require(storeB.workspaces.first?.sessions.first)
+        #expect(library.store(forSession: sessionA.id) === storeA)
+        #expect(library.store(forSession: sessionB.id) === storeB)
+        #expect(library.windowID(forSession: sessionA.id) == a.id)
+        #expect(library.windowID(forSession: sessionB.id) == b.id)
+    }
+
+    @Test func sessionLookupMissForUnknownAndClosedWindows() throws {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra")
+        let store = try #require(library.store(for: extra.id))
+        let session = try #require(store.workspaces.first?.sessions.first)
+        // a session in an open window is found.
+        #expect(library.store(forSession: session.id) === store)
+        // an unknown id misses.
+        #expect(library.store(forSession: UUID()) == nil)
+        #expect(library.windowID(forSession: UUID()) == nil)
+        // once the window closes, its sessions are no longer searchable.
+        library.closeWindow(extra.id)
+        #expect(library.store(forSession: session.id) == nil)
+        #expect(library.windowID(forSession: session.id) == nil)
+    }
+
+    // MARK: - Launch reopen latch + claim queue
+
+    @Test func consumeReopenReturnsExtraCountOnceAndSeedsClaimQueue() throws {
+        let library = WindowLibrary(directory: directory)
+        let a = library.windows[0].id
+        let b = library.newWindow(name: "b").id
+        library.frontmostWindowID = a
+        // two open windows → SwiftUI auto-opens one, so one extra openWindow() call is needed.
+        #expect(library.consumeReopen() == 1)
+        #expect(library.hasReopened)
+        // a second call (another window's .task) is a no-op.
+        #expect(library.consumeReopen() == 0)
+        // the claim queue is launch window (frontmost a) first, then b.
+        #expect(library.claimNextWindowID() == a)
+        #expect(library.claimNextWindowID() == b)
+        // drained → nil (an extra restored window dismisses itself).
+        #expect(library.claimNextWindowID() == nil)
+    }
+
+    @Test func consumeReopenSingleWindowNeedsNoExtra() throws {
+        let library = WindowLibrary(directory: directory)
+        let only = library.windows[0].id
+        #expect(library.consumeReopen() == 0)
+        #expect(library.claimNextWindowID() == only)
+        #expect(library.claimNextWindowID() == nil)
+    }
+
+    // the launch window's `.onAppear` may fire before the scene `.task` seeds the queue: it adopts the
+    // launch id via the fallback. `consumeReopen` must then exclude that adopted id from the seeded
+    // queue, so the single reopened window claims b (not a again) — no two windows binding one store.
+    @Test func consumeReopenExcludesFallbackAdoptedLaunchID() throws {
+        let library = WindowLibrary(directory: directory)
+        let a = library.windows[0].id
+        let b = library.newWindow(name: "b").id
+        library.frontmostWindowID = a
+        // launch window's .onAppear runs first: queue empty + not reopened → adopt the launch id (a).
+        #expect(library.adoptLaunchWindowID() == a)
+        // now the scene .task runs: still one extra openWindow() needed (N-1 = 1), but the queue must
+        // NOT re-offer a — only b remains for the reopened window.
+        #expect(library.consumeReopen() == 1)
+        #expect(library.claimNextWindowID() == b)
+        #expect(library.claimNextWindowID() == nil)
+    }
+
+    // single window, fallback ordering: the lone launch window adopts its id via the fallback, so
+    // consumeReopen needs no extra window AND leaves an empty queue (the launch window already has it).
+    @Test func consumeReopenSingleWindowFallbackAdoptedNeedsNoExtra() throws {
+        let library = WindowLibrary(directory: directory)
+        let only = library.windows[0].id
+        #expect(library.adoptLaunchWindowID() == only)
+        #expect(library.consumeReopen() == 0)
+        #expect(library.claimNextWindowID() == nil)
+    }
+
+    // the persisted frontmost may point at a CLOSED window (quit with a closed window frontmost, two
+    // others open). `launchWindowID` must fall through to an OPEN id, so `consumeReopen` seeds the
+    // whole open set and returns open.count - 1 — every open window gets claimed, none binds the
+    // closed store. Pre-fix `launchWindowID` returned the closed frontmost unconditionally, seeding a
+    // 3-entry queue but returning 1, so the last open window never reopened (off-by-two).
+    @Test func consumeReopenSeedsAllOpenWhenFrontmostIsClosed() throws {
+        let x = UUID()
+        let y = UUID()
+        let z = UUID()
+        try writeWindowFile(x, Snapshot(workspaces: [WorkspaceSnapshot(id: UUID(), name: "x", sessions: [])]))
+        try writeWindowFile(y, Snapshot(workspaces: [WorkspaceSnapshot(id: UUID(), name: "y", sessions: [])]))
+        try writeWindowFile(z, Snapshot(workspaces: [WorkspaceSnapshot(id: UUID(), name: "z", sessions: [])]))
+        // frontmost z is CLOSED; x and y are open.
+        try writeIndex(WindowsIndex(frontmost: z, windows: [
+            WindowEntry(id: x, name: "x", isOpen: true),
+            WindowEntry(id: y, name: "y", isOpen: true),
+            WindowEntry(id: z, name: "z", isOpen: false),
+        ]))
+        let library = WindowLibrary(directory: directory)
+        #expect(Set(library.openIDs()) == Set([x, y]))
+        #expect(library.frontmostWindowID == z)
+        // two open windows → SwiftUI auto-opens one, one extra openWindow() for the other.
+        #expect(library.consumeReopen() == 1)
+        // the launch window claims an OPEN id (not the closed frontmost z), the reopened window the other.
+        let launchID = try #require(library.claimNextWindowID())
+        let reopenedID = try #require(library.claimNextWindowID())
+        #expect(launchID != z)
+        #expect(reopenedID != z)
+        #expect(Set([launchID, reopenedID]) == Set([x, y]))
+        // queue exactly covers the open set — no stray, no undercount.
+        #expect(library.claimNextWindowID() == nil)
+    }
+
+    @Test func enqueueClaimAppendsToQueue() throws {
+        let library = WindowLibrary(directory: directory)
+        let only = library.windows[0].id
+        _ = library.consumeReopen()
+        #expect(library.claimNextWindowID() == only)
+        // a freshly opened window enqueues its id for the next appearing SwiftUI window.
+        let extra = library.newWindow(name: "extra").id
+        library.closeWindow(extra)
+        library.enqueueClaim(extra)
+        #expect(library.claimNextWindowID() == extra)
+        #expect(library.claimNextWindowID() == nil)
+    }
+
+    // a repeated window.select / reveal of the same window before its first claim is consumed must not
+    // enqueue the id twice — else two SwiftUI windows would claim it and one bundle would open in two
+    // on-screen windows. Pure queue-membership dedup (the "already on-screen, raise" check lives at the
+    // call site, not in enqueueClaim).
+    @Test func enqueueClaimDedupesPendingClaims() throws {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra").id
+        library.closeWindow(extra)
+        _ = library.consumeReopen()
+        _ = library.claimNextWindowID() // drain the launch id so the queue starts empty.
+        // three rapid opens of the same closed window before any claim is consumed enqueue it once.
+        library.enqueueClaim(extra)
+        library.enqueueClaim(extra)
+        library.enqueueClaim(extra)
+        #expect(library.claimNextWindowID() == extra)
+        #expect(library.claimNextWindowID() == nil)
+        // once the first claim is consumed, a fresh enqueue of the same id is queued again.
+        library.enqueueClaim(extra)
+        #expect(library.claimNextWindowID() == extra)
+        #expect(library.claimNextWindowID() == nil)
+    }
+
+    // newWindow pre-loads the new window's store BEFORE the caller enqueues its id (the
+    // AppActions.newWindow / window.new path). enqueueClaim must NOT skip a store-loaded id — else the
+    // claim is dropped, the spawned SwiftUI window claims nil and self-dismisses, and "New Window"
+    // creates a library record but renders no on-screen window. The fresh id is queued and claimable.
+    @Test func enqueueClaimQueuesNewWindowWithLoadedStore() throws {
+        let library = WindowLibrary(directory: directory)
+        _ = library.consumeReopen()
+        _ = library.claimNextWindowID() // drain the launch id so the queue starts empty.
+        let info = library.newWindow(name: "fresh") // pre-loads stores[info.id].
+        #expect(library.isOpen(info.id)) // store is loaded, as the app does before enqueueing.
+        library.enqueueClaim(info.id)
+        #expect(library.claimNextWindowID() == info.id)
+        #expect(library.claimNextWindowID() == nil)
+    }
+
+    // two adoptLaunchWindowID() calls before consumeReopen (SwiftUI restored more than one window,
+    // each hitting the empty-queue fallback) must NOT both get the same launch id — only the first
+    // does; the second gets nil and dismisses itself, so two windows can't bind the one launch store.
+    @Test func adoptLaunchWindowIDIsIdempotentPerLaunch() throws {
+        let library = WindowLibrary(directory: directory)
+        let only = library.windows[0].id
+        #expect(library.adoptLaunchWindowID() == only)
+        // a second caller before consumeReopen gets nil (not the same id again).
+        #expect(library.adoptLaunchWindowID() == nil)
+    }
+
+    // MARK: - Active store resolution
+
+    @Test func activeStoreFollowsFrontmost() throws {
+        let library = WindowLibrary(directory: directory)
+        let a = library.windows[0]
+        let b = library.newWindow(name: "b")
+        let storeA = try #require(library.store(for: a.id))
+        let storeB = try #require(library.store(for: b.id))
+        library.frontmostWindowID = a.id
+        #expect(library.activeStore === storeA)
+        library.frontmostWindowID = b.id
+        #expect(library.activeStore === storeB)
+    }
+
+    @Test func activeStoreFallsBackToFirstOpenWhenNoFrontmost() throws {
+        let library = WindowLibrary(directory: directory)
+        let first = try #require(library.store(for: library.windows[0].id))
+        library.newWindow(name: "extra")
+        library.frontmostWindowID = nil
+        // with no frontmost set, the first open window's store is used.
+        #expect(library.activeStore === first)
+    }
+
+    @Test func activeStoreSkipsClosedFrontmost() throws {
+        let library = WindowLibrary(directory: directory)
+        let a = library.windows[0]
+        let b = library.newWindow(name: "b")
+        let storeA = try #require(library.store(for: a.id))
+        // frontmost points at b, then b closes → fall back to the first open store (a).
+        library.frontmostWindowID = b.id
+        library.closeWindow(b.id)
+        #expect(library.activeStore === storeA)
+    }
+
+    @Test func activeWindowIDFollowsFrontmostThenFallsBack() throws {
+        let library = WindowLibrary(directory: directory)
+        let a = library.windows[0]
+        let b = library.newWindow(name: "b")
+        library.frontmostWindowID = b.id
+        #expect(library.activeWindowID == b.id)
+        // closing the frontmost falls back to the first open window.
+        library.closeWindow(b.id)
+        #expect(library.activeWindowID == a.id)
+        // an unset frontmost also falls back to the first open window.
+        library.frontmostWindowID = nil
+        #expect(library.activeWindowID == a.id)
+    }
+
+    // MARK: - Persistence round-trip
+
+    @Test func indexRoundTripsThroughDisk() throws {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "personal")
+        library.frontmostWindowID = extra.id
+        library.saveIndex()
+
+        let reloaded = WindowLibrary(directory: directory)
+        #expect(reloaded.windows.map(\.name) == ["window 1", "personal"])
+        #expect(reloaded.windows.map(\.id) == [library.windows[0].id, extra.id])
+        #expect(reloaded.frontmostWindowID == extra.id)
+        // both were open at save → both reopen.
+        #expect(Set(reloaded.openIDs()) == Set([library.windows[0].id, extra.id]))
+    }
+
+    @Test func perWindowTreePersistsAndReloads() throws {
+        let library = WindowLibrary(directory: directory)
+        let store = try #require(library.store(for: library.windows[0].id))
+        let ws = try #require(store.workspaces.first)
+        let session = try #require(store.addSession(toWorkspace: ws.id, cwd: "/var/log"))
+        store.renameSession(session.id, to: "logs")
+
+        let reloaded = WindowLibrary(directory: directory)
+        let reloadedStore = try #require(reloaded.store(for: reloaded.windows[0].id))
+        #expect(reloadedStore.workspaces[0].sessions.count == 2)
+        #expect(reloadedStore.workspaces[0].sessions[1].displayName == "logs")
+    }
+
+    @Test func closedWindowDoesNotReopenButStaysListed() throws {
+        let library = WindowLibrary(directory: directory)
+        let extra = library.newWindow(name: "extra")
+        library.closeWindow(extra.id)
+
+        let reloaded = WindowLibrary(directory: directory)
+        #expect(reloaded.windows.map(\.id).contains(extra.id))
+        #expect(!reloaded.isOpen(extra.id))
+        #expect(reloaded.openIDs() == [library.windows[0].id])
+    }
+
+    @Test func reopenFallsBackToFrontmostWhenNoneOpen() throws {
+        // an index with both windows closed must still open one (never windowless).
+        let a = UUID()
+        let b = UUID()
+        try writeWindowFile(a, Snapshot(workspaces: [WorkspaceSnapshot(id: UUID(), name: "ws", sessions: [])]))
+        try writeWindowFile(b, Snapshot(workspaces: [WorkspaceSnapshot(id: UUID(), name: "ws", sessions: [])]))
+        try writeIndex(WindowsIndex(frontmost: b, windows: [
+            WindowEntry(id: a, name: "a", isOpen: false),
+            WindowEntry(id: b, name: "b", isOpen: false),
+        ]))
+        let library = WindowLibrary(directory: directory)
+        #expect(library.openIDs() == [b])
+    }
+
+    @Test func reopenFallsBackToFirstWhenNoFrontmost() throws {
+        let a = UUID()
+        try writeWindowFile(a, Snapshot(workspaces: []))
+        try writeIndex(WindowsIndex(frontmost: nil, windows: [WindowEntry(id: a, name: "a", isOpen: false)]))
+        let library = WindowLibrary(directory: directory)
+        #expect(library.openIDs() == [a])
+    }
+
+    // a STALE frontmost (pointing at a window no longer in the list — e.g. removed out of band) with
+    // every window closed must NOT leave the app windowless: `loadStore(stale)` no-ops (the id isn't in
+    // `windows`), so the fallback must drop the stale id and open the first window instead.
+    @Test func reopenWithStaleFrontmostStillOpensAWindow() throws {
+        let a = UUID()
+        let stale = UUID()
+        try writeWindowFile(a, Snapshot(workspaces: [WorkspaceSnapshot(id: UUID(), name: "ws", sessions: [])]))
+        try writeIndex(WindowsIndex(frontmost: stale, windows: [WindowEntry(id: a, name: "a", isOpen: false)]))
+        let library = WindowLibrary(directory: directory)
+        // never windowless: the stale frontmost is ignored, the first (only) window opens.
+        #expect(library.openIDs() == [a])
+    }
+
+    // MARK: - Migration
+
+    @Test func migratesLegacyWorkspacesIntoOneWindow() throws {
+        let wsID = UUID()
+        let sessionID = UUID()
+        let snapshot = Snapshot(selectedSessionID: sessionID, workspaces: [
+            WorkspaceSnapshot(id: wsID, name: "legacy", sessions: [
+                SessionSnapshot(id: sessionID, customName: "build", cwd: "/legacy"),
+            ]),
+        ])
+        try PersistenceStore(directory: directory).save(snapshot)
+
+        let library = WindowLibrary(directory: directory)
+        #expect(library.windows.count == 1)
+        #expect(library.windows[0].name == "window 1")
+        #expect(library.frontmostWindowID == library.windows[0].id)
+        let store = try #require(library.store(for: library.windows[0].id))
+        #expect(store.workspaces.map(\.name) == ["legacy"])
+        #expect(store.workspaces[0].sessions[0].displayName == "build")
+        // migration wrote a per-window file and the index.
+        #expect(FileManager.default.fileExists(atPath: windowFileURL(library.windows[0].id).path))
+        #expect(FileManager.default.fileExists(atPath: indexURL.path))
+        // the legacy file is left in place.
+        #expect(FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    @Test func emptyLegacyFileSeedsInsteadOfMigrating() throws {
+        try PersistenceStore(directory: directory).save(Snapshot())
+        let library = WindowLibrary(directory: directory)
+        // empty legacy tree → seed a fresh default window, not an empty migrated one.
+        #expect(library.windows.count == 1)
+        let store = try #require(library.store(for: library.windows[0].id))
+        #expect(store.workspaces[0].name == "workspace 1")
+        #expect(store.workspaces[0].sessions.count == 1)
+    }
+
+    @Test func existingIndexIgnoresLegacy() throws {
+        // legacy present AND a valid index → the index wins, legacy ignored.
+        try PersistenceStore(directory: directory).save(Snapshot(workspaces: [
+            WorkspaceSnapshot(id: UUID(), name: "legacy", sessions: []),
+        ]))
+        let indexedID = UUID()
+        try writeWindowFile(indexedID, Snapshot(workspaces: [WorkspaceSnapshot(id: UUID(), name: "indexed", sessions: [])]))
+        try writeIndex(WindowsIndex(frontmost: indexedID, windows: [WindowEntry(id: indexedID, name: "indexed-win", isOpen: true)]))
+
+        let library = WindowLibrary(directory: directory)
+        #expect(library.windows.map(\.name) == ["indexed-win"])
+        let store = try #require(library.store(for: indexedID))
+        #expect(store.workspaces.map(\.name) == ["indexed"])
+    }
+
+    // MARK: - Recovery matrix
+
+    @Test func corruptIndexFallsBackToSeed() throws {
+        try Data("{ not valid json ]".utf8).write(to: indexURL)
+        let library = WindowLibrary(directory: directory)
+        // no legacy → seed one default window.
+        #expect(library.windows.count == 1)
+        #expect(library.windows[0].name == "window 1")
+        let store = try #require(library.store(for: library.windows[0].id))
+        #expect(store.workspaces[0].sessions.count == 1)
+    }
+
+    @Test func corruptIndexWithLegacyMigrates() throws {
+        try Data("garbage".utf8).write(to: indexURL)
+        try PersistenceStore(directory: directory).save(Snapshot(workspaces: [
+            WorkspaceSnapshot(id: UUID(), name: "legacy", sessions: []),
+        ]))
+        let library = WindowLibrary(directory: directory)
+        // corrupt index treated as absent → migrate from legacy.
+        let store = try #require(library.store(for: library.windows[0].id))
+        #expect(store.workspaces.map(\.name) == ["legacy"])
+    }
+
+    @Test func versionMismatchIndexTreatedAsAbsent() throws {
+        var future = WindowsIndex(windows: [WindowEntry(id: UUID(), name: "future", isOpen: true)])
+        future.version = WindowsIndex.currentVersion + 1
+        try writeIndex(future)
+        let library = WindowLibrary(directory: directory)
+        // mismatched version → seeded default, not the future entry.
+        #expect(library.windows.map(\.name) == ["window 1"])
+    }
+
+    @Test func emptyWindowsArrayIndexTreatedAsAbsent() throws {
+        try writeIndex(WindowsIndex(frontmost: nil, windows: []))
+        let library = WindowLibrary(directory: directory)
+        #expect(library.windows.map(\.name) == ["window 1"])
+    }
+
+    @Test func missingPerWindowFileLoadsEmptyTree() throws {
+        let id = UUID()
+        // index references a window whose per-window file was never written.
+        try writeIndex(WindowsIndex(frontmost: id, windows: [WindowEntry(id: id, name: "orphan", isOpen: true)]))
+        let library = WindowLibrary(directory: directory)
+        #expect(library.windows.map(\.name) == ["orphan"])
+        let store = try #require(library.store(for: id))
+        // a missing per-window file opens an empty tree (no crash, no abort).
+        #expect(store.workspaces.isEmpty)
+        #expect(library.isOpen(id))
+    }
+
+    @Test func corruptPerWindowFileLoadsEmptyTree() throws {
+        let id = UUID()
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("windows"), withIntermediateDirectories: true)
+        try Data("{ corrupt ]".utf8).write(to: windowFileURL(id))
+        try writeIndex(WindowsIndex(frontmost: id, windows: [WindowEntry(id: id, name: "corrupt", isOpen: true)]))
+        let library = WindowLibrary(directory: directory)
+        let store = try #require(library.store(for: id))
+        #expect(store.workspaces.isEmpty)
+    }
+
+    // MARK: - Reset per-session font sizes across all windows
+
+    // a global font/appearance change resets every surface to the new default, so per-session font
+    // overrides must be cleared in CLOSED windows too — else a closed window reopens later overriding
+    // the new default. The open window clears live; the closed one's snapshot file is rewritten.
+    @Test func resetSessionFontSizesAllWindowsClearsClosedAndOpen() throws {
+        // a closed window whose persisted session carries a font-size override.
+        let closedID = UUID()
+        let closedSession = UUID()
+        try writeWindowFile(closedID, Snapshot(workspaces: [
+            WorkspaceSnapshot(id: UUID(), name: "ws", sessions: [
+                SessionSnapshot(id: closedSession, customName: nil, cwd: "/tmp", fontSize: 18),
+            ]),
+        ]))
+        // an open window whose live session also carries an override.
+        let openID = UUID()
+        try writeWindowFile(openID, Snapshot(workspaces: [WorkspaceSnapshot(id: UUID(), name: "ws", sessions: [])]))
+        try writeIndex(WindowsIndex(frontmost: openID, windows: [
+            WindowEntry(id: openID, name: "open", isOpen: true),
+            WindowEntry(id: closedID, name: "closed", isOpen: false),
+        ]))
+        let library = WindowLibrary(directory: directory)
+        let openStore = try #require(library.store(for: openID))
+        let openWs = try #require(openStore.workspaces.first)
+        let openSession = try #require(openStore.addSession(toWorkspace: openWs.id, cwd: "/tmp"))
+        openStore.setFontSize(openSession.id, 22)
+        #expect(library.isOpen(openID))
+        #expect(!library.isOpen(closedID))
+
+        library.resetSessionFontSizesAllWindows()
+
+        // open window: live override cleared.
+        #expect(openStore.session(withID: openSession.id)?.fontSize == nil)
+        // closed window: its snapshot file rewritten with the override stripped.
+        let reloaded = PersistenceStore(directory: directory.appendingPathComponent("windows"),
+                                        fileName: "\(closedID.uuidString).json").load()
+        #expect(reloaded.workspaces.first?.sessions.first?.fontSize == nil)
+        // the closed window stayed closed (no store was loaded to clear it).
+        #expect(!library.isOpen(closedID))
+    }
+
+    // MARK: - saveAllOpen
+
+    @Test func saveAllOpenFlushesEveryOpenStore() throws {
+        let library = WindowLibrary(directory: directory)
+        let store = try #require(library.store(for: library.windows[0].id))
+        let ws = try #require(store.workspaces.first)
+        let session = try #require(store.workspaces.first?.sessions.first)
+        // simulate a live cwd change that AppStore doesn't auto-persist.
+        session.currentCwd = "/changed"
+        // add another open window too.
+        library.newWindow(name: "extra")
+        library.saveAllOpen()
+
+        // the cwd change is now on disk for the first window.
+        let reloaded = WindowLibrary(directory: directory)
+        let reloadedStore = try #require(reloaded.store(for: reloaded.windows[0].id))
+        let reloadedSession = try #require(reloadedStore.session(withID: session.id))
+        #expect(reloadedSession.initialCwd == "/changed")
+        _ = ws
+    }
+}

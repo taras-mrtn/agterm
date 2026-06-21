@@ -5,6 +5,6 @@ cd "$(dirname "$0")/.."
 
 ./scripts/setup.sh
 xcodegen generate
-xcodebuild -project agt.xcodeproj -scheme agt -configuration Debug \
+xcodebuild -project agterm.xcodeproj -scheme agterm -configuration Debug \
   -derivedDataPath build/DerivedData build
-open build/DerivedData/Build/Products/Debug/agt.app
+open build/DerivedData/Build/Products/Debug/agterm.app

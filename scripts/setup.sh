@@ -20,7 +20,7 @@ ZIG_FORMULA="zig@0.15"  # ghostty pins minimum_zig_version 0.15.2; keg-only so i
 XCFRAMEWORK_DIR="GhosttyKit.xcframework"
 # terminfo/ is the marker: it must extract as a SIBLING of ghostty/ so libghostty's
 # TERMINFO=dirname(GHOSTTY_RESOURCES_DIR)/terminfo derivation resolves xterm-ghostty.
-RESOURCES_MARKER="agt/Resources/terminfo"
+RESOURCES_MARKER="agterm/Resources/terminfo"
 
 need_xc=true
 need_res=true
@@ -66,11 +66,11 @@ fi
 
 if $need_res; then
   echo "staging ghostty resources..."
-  rm -rf agt/Resources/ghostty agt/Resources/terminfo
-  mkdir -p agt/Resources/ghostty
-  cp -R "$BUILD_DIR/zig-out/share/ghostty/shell-integration" agt/Resources/ghostty/
-  cp -R "$BUILD_DIR/zig-out/share/ghostty/themes" agt/Resources/ghostty/
-  cp -R "$BUILD_DIR/zig-out/share/terminfo" agt/Resources/terminfo
+  rm -rf agterm/Resources/ghostty agterm/Resources/terminfo
+  mkdir -p agterm/Resources/ghostty
+  cp -R "$BUILD_DIR/zig-out/share/ghostty/shell-integration" agterm/Resources/ghostty/
+  cp -R "$BUILD_DIR/zig-out/share/ghostty/themes" agterm/Resources/ghostty/
+  cp -R "$BUILD_DIR/zig-out/share/terminfo" agterm/Resources/terminfo
 fi
 
 echo "setup complete"

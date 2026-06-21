@@ -1,0 +1,3 @@
+import agtermctlKit
+
+Agtermctl.main()

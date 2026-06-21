@@ -1,0 +1,141 @@
+// adapted from thdxg/macterm (MIT)
+
+import AppKit
+import GhosttyKit
+import os
+
+/// Routes libghostty runtime callbacks to the appropriate terminal views.
+///
+/// `@unchecked Sendable` and NOT `@MainActor`: the C closures run synchronously
+/// off whatever thread libghostty calls from. This router holds no mutable
+/// state. Every `@MainActor` touch hops via `DispatchQueue.main.async`, and any
+/// C string is copied to a Swift `String` value *before* the hop (the `char*`
+/// is only valid for the synchronous callback duration).
+final class GhosttyCallbacks: @unchecked Sendable {
+    /// Coalesces libghostty wakeups into one queued main-thread tick. `wakeup_cb` fires off-main far faster
+    /// than the runloop drains; a single `ghostty_app_tick` drains all pending work. The flag clears before
+    /// the tick so a wakeup arriving during it re-schedules instead of being dropped. (Replaces the dropped
+    /// 120Hz poll timer — agterm is demand-driven now.)
+    private let tickScheduled = OSAllocatedUnfairLock(initialState: false)
+
+    func wakeup() {
+        let alreadyScheduled = tickScheduled.withLock { scheduled -> Bool in
+            if scheduled { return true }
+            scheduled = true
+            return false
+        }
+        guard !alreadyScheduled else { return }
+        DispatchQueue.main.async { [self] in
+            tickScheduled.withLock { $0 = false }
+            GhosttyApp.shared.tick()
+        }
+    }
+
+    func action(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
+        switch action.tag {
+        case GHOSTTY_ACTION_PWD:
+            guard let view = surfaceView(from: target), let ptr = action.action.pwd.pwd else { return true }
+            let pwd = String(cString: ptr)
+            DispatchQueue.main.async { view.applyPwd(pwd) }
+            return true
+        case GHOSTTY_ACTION_SET_TITLE:
+            // the shell or a program set the terminal title (OSC 0/1/2 — often from a PROMPT_COMMAND
+            // or a remote host over SSH). recover the surface, copy the title out of the C string,
+            // and apply it to the session; displayName prefers it over the cwd basename.
+            guard let view = surfaceView(from: target), let ptr = action.action.set_title.title else { return true }
+            let title = String(cString: ptr)
+            DispatchQueue.main.async { view.applyTitle(title) }
+            return true
+        case GHOSTTY_ACTION_CELL_SIZE:
+            // fires when the cell pixel size changes (font-size change via cmd +/-, or DPI
+            // change). used only as a trigger: the view reads the live font size and the app
+            // persists it.
+            guard let view = surfaceView(from: target) else { return true }
+            DispatchQueue.main.async { view.reportFontSize() }
+            return true
+        case GHOSTTY_ACTION_RENDER:
+            // libghostty signals this surface has a frame ready to paint. agterm is demand-driven (no poll
+            // timer), so service it by drawing now.
+            guard let view = surfaceView(from: target) else { return true }
+            DispatchQueue.main.async { view.renderNow() }
+            return true
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+            // a program emitted an OSC 9 / 777 desktop notification. recover the firing surface and
+            // copy the title/body out of the C strings synchronously (only valid for this call),
+            // then hop to the manager (which resolves the session/pane and applies suppression).
+            guard let view = surfaceView(from: target) else { return true }
+            let note = action.action.desktop_notification
+            let title = note.title.flatMap { String(cString: $0) } ?? ""
+            let body = note.body.flatMap { String(cString: $0) } ?? ""
+            DispatchQueue.main.async { NotificationManager.shared.notify(surface: view, title: title, body: body) }
+            return true
+        case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
+            // the child process exited. ghostty prints its "Process exited. Press any key to close"
+            // fallback unless the host consumes this action. an overlay that should vanish closes
+            // immediately and returns true to suppress the prompt; a wait-opt-in overlay (and any other
+            // surface) returns false so ghostty shows the prompt and close_surface_cb handles the close.
+            guard let view = surfaceView(from: target), view.shouldCloseOnChildExitAction else { return false }
+            DispatchQueue.main.async { view.handleProcessExit() }
+            return true
+        default:
+            return false
+        }
+    }
+
+    func readClipboard(ud: UnsafeMutableRawPointer?, location _: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) -> Bool {
+        let text = Self.readPasteboardText() ?? ""
+        text.withCString { ghostty_surface_complete_clipboard_request(surface(from: ud), $0, state, false) }
+        return true
+    }
+
+    /// Returns pasted text from the pasteboard: file paths (Finder drag/copy)
+    /// fall back to plain string.
+    static func readPasteboardText() -> String? {
+        let pb = NSPasteboard.general
+        if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL] {
+            let paths = urls
+                .map { url in url.isFileURL ? url.path(percentEncoded: false) : url.absoluteString }
+                .filter { !$0.isEmpty }
+            if !paths.isEmpty { return paths.joined(separator: " ") }
+        }
+        return pb.string(forType: .string).flatMap { !$0.isEmpty ? $0 : nil }
+    }
+
+    func confirmReadClipboard(ud: UnsafeMutableRawPointer?, content: UnsafePointer<CChar>?, state: UnsafeMutableRawPointer?) {
+        guard let content else { return }
+        ghostty_surface_complete_clipboard_request(surface(from: ud), content, state, true)
+    }
+
+    func writeClipboard(content: UnsafePointer<ghostty_clipboard_content_s>?, len: UInt) {
+        guard let content, len > 0 else { return }
+        for item in UnsafeBufferPointer(start: content, count: Int(len)) {
+            guard let data = item.data, let mime = item.mime, String(cString: mime).hasPrefix("text/plain") else { continue }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(String(cString: data), forType: .string)
+            return
+        }
+    }
+
+    func closeSurface(ud: UnsafeMutableRawPointer?) {
+        guard let ud else { return }
+        // The Session retains the view until destroySurface() runs (the only
+        // place ghostty_surface_free is called), so takeUnretainedValue() is
+        // safe here. Recover the view and hop to the main actor — never close
+        // or free synchronously from this callback.
+        let view = Unmanaged<GhosttySurfaceView>.fromOpaque(ud).takeUnretainedValue()
+        DispatchQueue.main.async { view.handleProcessExit() }
+    }
+
+    private func surfaceView(from target: ghostty_target_s) -> GhosttySurfaceView? {
+        guard target.tag == GHOSTTY_TARGET_SURFACE,
+              let surface = target.target.surface,
+              let ud = ghostty_surface_userdata(surface)
+        else { return nil }
+        return Unmanaged<GhosttySurfaceView>.fromOpaque(ud).takeUnretainedValue()
+    }
+
+    private func surface(from ud: UnsafeMutableRawPointer?) -> ghostty_surface_t? {
+        guard let ud else { return nil }
+        return Unmanaged<GhosttySurfaceView>.fromOpaque(ud).takeUnretainedValue().surface
+    }
+}

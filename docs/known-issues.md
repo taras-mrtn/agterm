@@ -6,20 +6,20 @@
 output blanks the scrollback — scrolling up shows empty lines, the data appears lost. Decreasing
 the font (cmd--) is fine; it only happens on increase, and only when there is scrollback.
 
-**Root cause: a libghostty `main` renderer regression — NOT agt's code.** It is fixed by pinning
+**Root cause: a libghostty `main` renderer regression — NOT agterm's code.** It is fixed by pinning
 `scripts/setup.sh` to a pre-regression ghostty commit (`GHOSTTY_REV = 4dcb09ada`, 2026-04-30). Earlier
-analysis blamed agt's fixed-pixel pane and "macterm-style embedding" (a shrinking grid on a font
+analysis blamed agterm's fixed-pixel pane and "macterm-style embedding" (a shrinking grid on a font
 increase) — that was wrong. No app-side change fixes it, and a from-source build of a *different*
 embedder (conterm) against the same post-regression libghostty blanks identically, while the same
 embedder against a pre-regression libghostty does not.
 
 **Bisect (all on `1.3.2-main`):**
 - `d8d2849` (2026-04-11), bundled by conterm v2.2.0 — **good**.
-- `4dcb09ada` (2026-04-30), our pin, built from upstream — **good** (verified in agt).
+- `4dcb09ada` (2026-04-30), our pin, built from upstream — **good** (verified in agterm).
 - `11ab3c8` (2026-05-23), the *oldest* thdxg/ghostty daily build that still exists — **blanks**.
 - `1036233` (06-16) … `de36cdf` (06-20), every later thdxg daily — **blanks**.
 
-So the regression landed on ghostty `main` after 2026-04-30 and was present by 2026-05-23. agt used to
+So the regression landed on ghostty `main` after 2026-04-30 and was present by 2026-05-23. agterm used to
 download thdxg's pinned daily build (`build-2026-06-20`), which is well past it. thdxg prunes daily
 releases to ~28 days, so no good daily build is downloadable — which is why `setup.sh` now builds
 libghostty from upstream source at a pinned good SHA instead (see `CLAUDE.md` → GhosttyKit.xcframework).

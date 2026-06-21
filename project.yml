@@ -1,4 +1,4 @@
-name: agt
+name: agterm
 options:
   bundleIdPrefix: com.umputun
   deploymentTarget:
@@ -33,18 +33,18 @@ settings:
       ONLY_ACTIVE_ARCH: NO
 
 packages:
-  agtCore:
-    path: agtCore
+  agtermCore:
+    path: agtermCore
 
 targets:
-  agt:
+  agterm:
     type: application
     platform: macOS
     sources:
-      - path: agt
+      - path: agterm
         excludes:
           - "Info.plist"
-          - "agt.entitlements"
+          - "agterm.entitlements"
           - "Resources/ghostty"
           - "Resources/terminfo"
       # Ghostty resources (themes + shell-integration), downloaded by setup.sh.
@@ -53,7 +53,7 @@ targets:
       # Contents/Resources/ghostty — GHOSTTY_RESOURCES_DIR points here, matching
       # a real Ghostty.app so libghostty resolves themes/shell-integration and
       # derives TERMINFO as ../terminfo (the sibling dir below).
-      - path: agt/Resources/ghostty
+      - path: agterm/Resources/ghostty
         type: folder
         buildPhase: resources
       # Compiled terminfo DB so TERM=xterm-ghostty resolves without a
@@ -61,16 +61,16 @@ targets:
       # (terminfo/78/xterm-ghostty) and extensionless files. MUST land at
       # Contents/Resources/terminfo — a SIBLING of ghostty/ — so libghostty's
       # dirname(GHOSTTY_RESOURCES_DIR)/terminfo derivation hits it.
-      - path: agt/Resources/terminfo
+      - path: agterm/Resources/terminfo
         type: folder
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.umputun.agt
-        PRODUCT_NAME: agt
-        INFOPLIST_FILE: agt/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.umputun.agterm
+        PRODUCT_NAME: agterm
+        INFOPLIST_FILE: agterm/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CODE_SIGN_ENTITLEMENTS: agt/agt.entitlements
+        CODE_SIGN_ENTITLEMENTS: agterm/agterm.entitlements
         MARKETING_VERSION: "0.0.0"
         CURRENT_PROJECT_VERSION: "0.0.0"
         ENABLE_HARDENED_RUNTIME: YES
@@ -85,7 +85,7 @@ targets:
     dependencies:
       - framework: GhosttyKit.xcframework
         embed: false
-      - package: agtCore
+      - package: agtermCore
       - sdk: AppKit.framework
       # libghostty calls Text Input Source Services (TISCopyCurrentKeyboard…)
       # which live in Carbon; required to link the prebuilt xcframework.
@@ -98,37 +98,37 @@ targets:
       - sdk: MetalKit.framework
       - sdk: QuartzCore.framework
 
-  agtUITests:
+  agtermUITests:
     type: bundle.ui-testing
     platform: macOS
     sources:
-      - agtUITests
+      - agtermUITests
     dependencies:
-      - target: agt
+      - target: agterm
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.umputun.agtUITests
-        TEST_TARGET_NAME: agt
+        PRODUCT_BUNDLE_IDENTIFIER: com.umputun.agtermUITests
+        TEST_TARGET_NAME: agterm
         CODE_SIGN_IDENTITY: "-"
         GENERATE_INFOPLIST_FILE: YES
         # UI test code drives XCTest APIs that aren't Sendable-clean; the strict
-        # checking the app/agtCore use isn't needed (and breaks) here.
+        # checking the app/agtermCore use isn't needed (and breaks) here.
         SWIFT_STRICT_CONCURRENCY: minimal
         # the runner is ad-hoc signed; hardened runtime on the test bundle causes
         # a Team-ID mismatch when the runner loads the xctest bundle.
         ENABLE_HARDENED_RUNTIME: NO
 
 schemes:
-  agt:
+  agterm:
     build:
       targets:
-        agt: all
-        agtUITests: [test]
+        agterm: all
+        agtermUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        - agtUITests
+        - agtermUITests
     archive:
       config: Release

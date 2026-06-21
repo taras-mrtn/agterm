@@ -1,16 +1,16 @@
-# agt
+# agterm
 
-`agt` is a small native macOS terminal built on [libghostty](https://ghostty.org), Ghostty's terminal embedding library. The app shell is SwiftUI, with two focused AppKit bridges: the terminal surface (libghostty renders into a Metal layer and needs raw key, IME, and mouse events SwiftUI does not expose) and the sidebar, an `NSOutlineView` chosen for first-class native drag-and-drop of sessions between workspaces.
+`agterm` is a small native macOS terminal built on [libghostty](https://ghostty.org), Ghostty's terminal embedding library. The app shell is SwiftUI, with two focused AppKit bridges: the terminal surface (libghostty renders into a Metal layer and needs raw key, IME, and mouse events SwiftUI does not expose) and the sidebar, an `NSOutlineView` chosen for first-class native drag-and-drop of sessions between workspaces.
 
-The distinguishing feature is a two-level workspace tree in a vertical sidebar: user-named workspaces (for example "work", "personal") each contain individual shell sessions. Ghostty itself has no vertical tabs and no workspace grouping; `agt` provides exactly that and nothing more.
+The distinguishing feature is a two-level workspace tree in a vertical sidebar: user-named workspaces (for example "work", "personal") each contain individual shell sessions. Ghostty itself has no vertical tabs and no workspace grouping; `agterm` provides exactly that and nothing more.
 
 ## Approach
 
-`agt` links `GhosttyKit.xcframework`, which `scripts/setup.sh` builds from upstream [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) source — a shallow checkout at a pinned commit plus `zig build`, using the keg-only `zig@0.15` formula for the zig version ghostty pins. Building from source keeps the libghostty toolchain self-owned: no third-party fork, no prunable daily-build download. The pin is a deliberately chosen known-good commit (see [docs/known-issues.md](docs/known-issues.md)). The xcframework and the accompanying ghostty resources (themes, shell-integration scripts, compiled terminfo database) are gitignored and never committed; the build is one-time, cached by a present-check.
+`agterm` links `GhosttyKit.xcframework`, which `scripts/setup.sh` builds from upstream [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) source — a shallow checkout at a pinned commit plus `zig build`, using the keg-only `zig@0.15` formula for the zig version ghostty pins. Building from source keeps the libghostty toolchain self-owned: no third-party fork, no prunable daily-build download. The pin is a deliberately chosen known-good commit (see [docs/known-issues.md](docs/known-issues.md)). The xcframework and the accompanying ghostty resources (themes, shell-integration scripts, compiled terminfo database) are gitignored and never committed; the build is one-time, cached by a present-check.
 
 The project is split into two modules:
 
-- `agtCore` is a host-free Swift package (Foundation and Observation only, no GhosttyKit, AppKit, or Metal). It holds the model, persistence, and naming logic and is covered by unit tests.
+- `agtermCore` is a host-free Swift package (Foundation and Observation only, no GhosttyKit, AppKit, or Metal). It holds the model, persistence, and naming logic and is covered by unit tests.
 - The app target adds the SwiftUI views and the libghostty bridge.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the module split, the surface-ownership rules, and the concurrency contract at the C boundary.
@@ -31,13 +31,13 @@ scripts/run.sh     # setup, generate the Xcode project, build Debug, launch
 `scripts/build.sh` produces a Release build without launching. The unit tests run independently of Xcode and libghostty:
 
 ```sh
-cd agtCore && swift test
+cd agtermCore && swift test
 ```
 
-`scripts/test.sh` is a wrapper for the same command. UI behavior (rename, close, move, drag, add-session) is covered by XCUITests in `agtUITests/` that drive the running app through the accessibility API:
+`scripts/test.sh` is a wrapper for the same command. UI behavior (rename, close, move, drag, add-session) is covered by XCUITests in `agtermUITests/` that drive the running app through the accessibility API:
 
 ```sh
-xcodebuild test -project agt.xcodeproj -scheme agt -destination 'platform=macOS'
+xcodebuild test -project agterm.xcodeproj -scheme agterm -destination 'platform=macOS'
 ```
 
 ## Features
@@ -52,19 +52,19 @@ xcodebuild test -project agt.xcodeproj -scheme agt -destination 'platform=macOS'
 - Two fuzzy-search command palettes (type to filter, ↑/↓ to move, Enter to run, Esc to dismiss): the **session switcher** (⌃P) jumps between open sessions by name or working directory, and the **action palette** (⌃⇧P) runs any command (new/rename/close, delete workspace, split, quick terminal, font size, move session to a workspace, …). Results sort by match quality then alphabetically. Both are also in the View menu.
 - A Ctrl-Tab session switcher (macOS app-switcher style): hold Ctrl and tap Tab to walk a most-recently-used list of sessions across all workspaces (the previous session pre-selected on top, Ctrl+Shift+Tab reverses), then release Ctrl to switch. A quick tap of Ctrl+Tab flips straight to the previously visited session.
 - A Settings window (Cmd+,) with **General**, **Appearance**, and **Key Mapping** tabs (Key Mapping is a placeholder for now). **General** toggles macOS notification banners. **Appearance → Terminal** sets the terminal font family, default font size, and ghostty theme (any of the 512 bundled themes); **Appearance → Window** sets background opacity and blur (a translucent, optionally blurred window — the sidebar's Liquid Glass tints to match on macOS 26). Changes persist and apply live to open terminals. Applying a font/theme change resets per-session cmd-+/- zoom to the default.
-- Terminal desktop notifications: a program's OSC 9 / 777 notification from any session or pane surfaces as a macOS banner and an unseen-count badge on the sidebar row (rolled up onto a collapsed workspace row). Clicking the banner brings agt forward and focuses the exact pane; focusing a session clears its badge and dismisses its delivered banners. A notification from the pane you're already focused on is suppressed. Banners can be turned off in General settings — the badge still tracks notifications either way.
+- Terminal desktop notifications: a program's OSC 9 / 777 notification from any session or pane surfaces as a macOS banner and an unseen-count badge on the sidebar row (rolled up onto a collapsed workspace row). Clicking the banner brings agterm forward and focuses the exact pane; focusing a session clears its badge and dismisses its delivered banners. A notification from the pane you're already focused on is suppressed. Banners can be turned off in General settings — the badge still tracks notifications either way.
 - Named windows: a window is a top-level bundle of workspaces and sessions, each in its own on-screen macOS window. Keep a library of windows (for example "work" and "personal"), open one per on-screen window, and create, rename, or delete them from the **File** menu (New Window ⌥⌘N, Open Window ▸, Rename Window…, Delete Window) or the action palette. Each bundle shows in exactly one window. The set of windows open at quit reopens on the next launch, with their frames restored.
 - Auto-persist on every change and on quit; restore the tree, names, selection, each session's working directory and font size, the split state, and the status-bar visibility on the next launch.
 
-## Scripting agt
+## Scripting agterm
 
-`agt` can be driven from a script over a local unix-domain socket through a companion CLI, `agtctl`. This is for personal scripting — fire-and-forget commands that manage workspaces and sessions, inject text, and invoke control actions. There is no terminal-output streaming and no event subscription.
+`agterm` can be driven from a script over a local unix-domain socket through a companion CLI, `agtermctl`. This is for personal scripting — fire-and-forget commands that manage workspaces and sessions, inject text, and invoke control actions. There is no terminal-output streaming and no event subscription.
 
-`agtctl` lives in the `agtCore` Swift package and builds without Xcode or libghostty:
+`agtermctl` lives in the `agtermCore` Swift package and builds without Xcode or libghostty:
 
 ```sh
-cd agtCore && swift build -c release
-# the binary is at agtCore/.build/release/agtctl
+cd agtermCore && swift build -c release
+# the binary is at agtermCore/.build/release/agtermctl
 ```
 
 Each command targets a session or workspace by its UUID, a unique prefix of that UUID (git-style), or the keyword `active` (the selected session / current workspace). `--target` defaults to `active`, so the current one rarely needs to be named. Mutating commands print the affected id; `tree` prints the workspace and session tree. Add `--json` for the raw response, or `--socket PATH` to override the socket path. The exit code is zero on success, non-zero on error.
@@ -72,14 +72,14 @@ Each command targets a session or workspace by its UUID, a unique prefix of that
 `--workspace`/`--target` take an id, a unique id prefix, or `active` — never a name. To create a workspace and then open a session in it, capture the printed id:
 
 ```sh
-agtctl tree                                   # print the workspace/session tree with ids
-ws=$(agtctl workspace new work)               # create a workspace, capture its id
-agtctl session new --workspace "$ws" --cwd ~/src/agt  # open a session in it, print its id
-agtctl session type --target 9f3c $'make test\n'      # inject text into a session by id prefix
-echo 'make test' | agtctl session type --target active --stdin
-agtctl session split toggle                   # split the active session
-agtctl quick toggle                           # toggle the quick terminal
-agtctl font inc                               # increase the active surface's font size
+agtermctl tree                                   # print the workspace/session tree with ids
+ws=$(agtermctl workspace new work)               # create a workspace, capture its id
+agtermctl session new --workspace "$ws" --cwd ~/src/agterm  # open a session in it, print its id
+agtermctl session type --target 9f3c $'make test\n'      # inject text into a session by id prefix
+echo 'make test' | agtermctl session type --target active --stdin
+agtermctl session split toggle                   # split the active session
+agtermctl quick toggle                           # toggle the quick terminal
+agtermctl font inc                               # increase the active surface's font size
 ```
 
 `session type` types the text as real keystrokes, and every newline is a real Return press — so a trailing newline submits the command, and a multi-line payload runs line by line (a multi-line shell construct like a `for` loop is entered across the shell's continuation prompts and runs as one command). Note the `$'…\n'` quoting: a literal `\n` inside plain single quotes reaches the CLI as two characters, not a newline; use `$'…\n'` or pipe a real newline via `--stdin`.
@@ -87,8 +87,8 @@ agtctl font inc                               # increase the active surface's fo
 `session copy` returns the target session's selected text in the response (it does not touch the system clipboard), so a script can move a selection from one session to another:
 
 ```sh
-sel=$(agtctl session copy --target 9f3c)      # the selected text in session 9f3c
-agtctl session type --target work --select "$sel"  # paste it into another session
+sel=$(agtermctl session copy --target 9f3c)      # the selected text in session 9f3c
+agtermctl session type --target work --select "$sel"  # paste it into another session
 ```
 
 With no selection it exits non-zero with `no selection`. The selection must be made in the terminal (drag/Shift-click); `session copy` only reads it.
@@ -96,45 +96,45 @@ With no selection it exits non-zero with `no selection`. The selection must be m
 `session overlay open` runs a program in an ephemeral terminal on top of a session (full size, hiding the single/split content underneath). It is meant for launching an interactive program over a session — the overlay grabs focus, and when the program exits the overlay vanishes and the session reappears unchanged:
 
 ```sh
-agtctl session overlay open "revdiff HEAD~3" --target 9f3c  # review the last 3 commits over session 9f3c
-agtctl session overlay open "htop"                          # on the active session
-agtctl session overlay open "make test" --wait              # keep the overlay open after exit (press a key to close)
-agtctl session overlay close --target 9f3c                  # close it from a script
+agtermctl session overlay open "revdiff HEAD~3" --target 9f3c  # review the last 3 commits over session 9f3c
+agtermctl session overlay open "htop"                          # on the active session
+agtermctl session overlay open "make test" --wait              # keep the overlay open after exit (press a key to close)
+agtermctl session overlay close --target 9f3c                  # close it from a script
 ```
 
-The overlay renders only for the active session, so select it first (or target `active`). By default it closes the instant the program exits; `--wait` keeps it on a "press any key to close" prompt so you can read the program's final output. A `*` `(overlay)` tag in `agtctl tree` marks a session whose overlay is open.
+The overlay renders only for the active session, so select it first (or target `active`). By default it closes the instant the program exits; `--wait` keeps it on a "press any key to close" prompt so you can read the program's final output. A `*` `(overlay)` tag in `agtermctl tree` marks a session whose overlay is open.
 
 A session's terminal surface is created lazily — it does not exist until the session has been shown at least once. Injecting text into a never-shown session therefore fails with `session not realized` unless you pass `--select`, which selects the session (realizing its surface) before injecting:
 
 ```sh
-id=$(agtctl session new --cwd ~/src/agt)
-agtctl session type --target "$id" --select $'echo hello\n'
+id=$(agtermctl session new --cwd ~/src/agterm)
+agtermctl session type --target "$id" --select $'echo hello\n'
 ```
 
-`agtctl window` drives the named windows. `window list` prints `id  name  [open]  [active]` (raw with `--json`); the other subcommands take a window id, a unique prefix, or `active` (the frontmost):
+`agtermctl window` drives the named windows. `window list` prints `id  name  [open]  [active]` (raw with `--json`); the other subcommands take a window id, a unique prefix, or `active` (the frontmost):
 
 ```sh
-agtctl window list                            # id  name  [open]  [active]
-w=$(agtctl window new work)                   # create and open a window, capture its id
-agtctl window select "$w"                     # raise it (opening it first if it was closed)
-agtctl window rename "$w" personal            # rename it
-agtctl window close "$w"                      # close its on-screen window (the bundle is kept)
-agtctl window delete "$w"                     # delete it (the last window can't be deleted)
+agtermctl window list                            # id  name  [open]  [active]
+w=$(agtermctl window new work)                   # create and open a window, capture its id
+agtermctl window select "$w"                     # raise it (opening it first if it was closed)
+agtermctl window rename "$w" personal            # rename it
+agtermctl window close "$w"                      # close its on-screen window (the bundle is kept)
+agtermctl window delete "$w"                     # delete it (the last window can't be deleted)
 ```
 
 A global `--window <id>` option on the session, workspace, `tree`, and `font` commands targets a *specific* window's tree instead of the frontmost one (the window must be open). Without it, those commands act on the frontmost window:
 
 ```sh
-agtctl tree --window "$w"                              # the tree of window $w
-agtctl session new --window "$w" --cwd ~/src/agt       # open a session in window $w
+agtermctl tree --window "$w"                              # the tree of window $w
+agtermctl session new --window "$w" --cwd ~/src/agterm       # open a session in window $w
 ```
 
-Inside a session's shell, `agt` injects environment variables a script can read: `AGT_ENABLED=1`, `AGT_WINDOW_ID`, `AGT_WORKSPACE_ID`, `AGT_SESSION_ID`, and `AGT_SOCKET` (the live control-socket path). So a script running in a session can drive its own window without hard-coding ids:
+Inside a session's shell, `agterm` injects environment variables a script can read: `AGTERM_ENABLED=1`, `AGTERM_WINDOW_ID`, `AGTERM_WORKSPACE_ID`, `AGTERM_SESSION_ID`, and `AGTERM_SOCKET` (the live control-socket path). So a script running in a session can drive its own window without hard-coding ids:
 
 ```sh
-agtctl session new --window "$AGT_WINDOW_ID" --cwd .   # open a sibling session in this window
-agtctl session type --target "$AGT_SESSION_ID" $'\n'   # type into this very session
-agtctl tree --socket "$AGT_SOCKET"                     # reach the same agt this shell runs in
+agtermctl session new --window "$AGTERM_WINDOW_ID" --cwd .   # open a sibling session in this window
+agtermctl session type --target "$AGTERM_SESSION_ID" $'\n'   # type into this very session
+agtermctl tree --socket "$AGTERM_SOCKET"                     # reach the same agterm this shell runs in
 ```
 
 ## Restore limitations
@@ -147,8 +147,8 @@ Restore reconstructs the structure, not the running processes. Three limitations
 
 ## Attribution
 
-agt embeds **libghostty**, the terminal engine from [Ghostty](https://github.com/ghostty-org/ghostty) (MIT). It does all the real terminal work: rendering, VT parsing, and shell I/O. agt builds it from upstream source at a pinned commit via `scripts/setup.sh`, with no fork and no prebuilt binary.
+agterm embeds **libghostty**, the terminal engine from [Ghostty](https://github.com/ghostty-org/ghostty) (MIT). It does all the real terminal work: rendering, VT parsing, and shell I/O. agterm builds it from upstream source at a pinned commit via `scripts/setup.sh`, with no fork and no prebuilt binary.
 
-The way agt drives libghostty's C API from a SwiftUI/AppKit app, under the Swift 6 strict-concurrency toolchain, was learned from [macterm](https://github.com/thdxg/macterm) (`thdxg/macterm`, MIT). The libghostty bridge files (`GhosttyApp`, `GhosttyCallbacks`, `GhosttyResources`, `GhosttySurfaceView`, `WindowAppearance`) are adapted from it and each carries an attribution comment. The model, sidebar, persistence, control channel, and multi-window code are original to agt.
+The way agterm drives libghostty's C API from a SwiftUI/AppKit app, under the Swift 6 strict-concurrency toolchain, was learned from [macterm](https://github.com/thdxg/macterm) (`thdxg/macterm`, MIT). The libghostty bridge files (`GhosttyApp`, `GhosttyCallbacks`, `GhosttyResources`, `GhosttySurfaceView`, `WindowAppearance`) are adapted from it and each carries an attribution comment. The model, sidebar, persistence, control channel, and multi-window code are original to agterm.
 
 SwiftUI guidance during development came from the [SwiftUI Agent Skill](https://github.com/AvdLee/SwiftUI-Agent-Skill) by Antoine van der Lee (MIT). Special thanks to [@ksenks](https://github.com/ksenks) for recommending it.
