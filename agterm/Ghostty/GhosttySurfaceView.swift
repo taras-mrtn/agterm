@@ -57,6 +57,21 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// by the app's surface factory.
     var onExit: (() -> Void)?
 
+    /// For a capturing overlay surface: the temp file the command wrapper writes its exit status to
+    /// (`echo $? > file`). libghostty's child-exited status reflects the login-shell wrapper (always 0),
+    /// so the real command status is captured via the wrapper instead. Read in `destroySurface` (every
+    /// teardown path) and then deleted, so the file's lifetime tracks the surface — no registry or sweep.
+    /// nil for non-capturing surfaces.
+    var overlayCodeFile: String?
+
+    /// For a capturing overlay surface: receives the parsed exit status read from `overlayCodeFile` on
+    /// teardown. Set by the overlay factory to record it onto the session for `session.overlay.result`.
+    /// Called from `destroySurface` (main actor) on every in-process teardown, so the status is captured
+    /// without depending on `onExit` (e.g. an explicit `session.overlay.close`). For a session/window
+    /// force-close the recording no-ops (the session is already gone), but the result is then unqueryable
+    /// anyway; the temp file is deleted regardless.
+    var onExitCodeCaptured: ((Int) -> Void)?
+
     /// Called on the main actor when this surface gains (`true`) or loses (`false`) first
     /// responder, so the app can track which split pane is active. Set by the factory.
     var onFocusChange: ((Bool) -> Void)?
@@ -130,6 +145,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         if let surface { ghostty_surface_free(surface) }
         configCStrings.forEach { free($0) }
         envVars = []
+        if let f = overlayCodeFile { try? FileManager.default.removeItem(atPath: f) }
     }
 
     // MARK: - Callback entry points
@@ -413,6 +429,18 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         configCStrings = []
         // the env structs only point into the freed configCStrings buffers; clear them too.
         envVars = []
+        // read the wrapper-captured exit status, hand it off, then delete the temp file so its lifetime
+        // tracks the surface. runs on every in-process teardown (natural exit, explicit close, force-close).
+        if let f = overlayCodeFile {
+            if let text = try? String(contentsOfFile: f, encoding: .utf8),
+               let code = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                onExitCodeCaptured?(code)
+            } else {
+                NSLog("overlay exit-code file unreadable or empty: %@", f)
+            }
+            try? FileManager.default.removeItem(atPath: f)
+            overlayCodeFile = nil
+        }
     }
 
     /// `TerminalSurface` conformance: the model calls this when the owning

@@ -159,6 +159,24 @@ struct CommandsTests {
         #expect(try request(["session", "overlay", "close"]) == ControlRequest(cmd: .sessionOverlayClose, target: "active"))
     }
 
+    @Test func sessionOverlayOpenWithBlockParses() throws {
+        // --block changes run() (open → poll result), not makeRequest, so the built request is the plain open.
+        let expected = ControlRequest(cmd: .sessionOverlayOpen, target: "active", args: ControlArgs(command: "revdiff"))
+        #expect(try request(["session", "overlay", "open", "revdiff", "--block"]) == expected)
+    }
+
+    @Test func sessionOverlayResult() throws {
+        #expect(try request(["session", "overlay", "result", "--target", "9f3c"])
+            == ControlRequest(cmd: .sessionOverlayResult, target: "9f3c"))
+    }
+
+    @Test func sessionOverlayBlockRejectsWait() {
+        // validate() enforces the mutually-exclusive flags at parse time (before any connection).
+        #expect(throws: (any Error).self) {
+            try Agtermctl.parseAsRoot(["session", "overlay", "open", "cmd", "--block", "--wait"])
+        }
+    }
+
     @Test func quickDefaultsToggle() throws {
         #expect(try request(["quick"]) == ControlRequest(cmd: .quick, args: ControlArgs(mode: "toggle")))
     }

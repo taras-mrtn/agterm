@@ -278,6 +278,13 @@ struct agtermApp: App {
         return view
     }
 
+    /// The fixed wrapper that runs the overlay command and records its exit status to a temp file.
+    /// stdout/stderr are NOT redirected (so a TUI renders normally); only the status is captured —
+    /// libghostty's child-exited status reflects the login-shell wrapper, not the command. The real
+    /// command + the temp path ride in env (`AGTERM_OVL_CMD`/`AGTERM_OVL_CODE`), never interpolated, so
+    /// there is no shell-quoting of user data. The subshell makes an inline `exit N` propagate to `$?`.
+    private static let overlayExitWrapper = "sh -c '( eval \"$AGTERM_OVL_CMD\" ); echo $? > \"$AGTERM_OVL_CODE\"'"
+
     /// Overlay-terminal surface factory: an ephemeral surface running the session's `overlayCommand`
     /// as its process in `overlayCwd` (default the session's current dir). Like the split, it is NOT
     /// wired to the session (no `view.session`), so its PWD reports don't clobber the session's
@@ -285,10 +292,21 @@ struct agtermApp: App {
     /// which tears the surface down and hides the overlay — so the program's exit makes it vanish.
     @MainActor
     private static func makeOverlaySurface(for session: Session, store: AppStore, env: [String: String]) -> GhosttySurfaceView {
-        let view = GhosttySurfaceView(workingDirectory: session.overlayCwd ?? session.effectiveCwd,
-                                      fontSize: session.fontSize.map(Float.init), command: session.overlayCommand,
-                                      waitAfterCommand: session.overlayWait, autoFocus: true, env: env)
         let sessionID = session.id
+        // wrap the command so its exit status lands in a per-surface temp file. No stdout/stderr
+        // redirect — the program renders in the overlay as usual.
+        let codeFile = (NSTemporaryDirectory() as NSString).appendingPathComponent("agterm-ovl-\(UUID().uuidString).code")
+        var overlayEnv = env
+        overlayEnv["AGTERM_OVL_CMD"] = session.overlayCommand ?? ""
+        overlayEnv["AGTERM_OVL_CODE"] = codeFile
+        let view = GhosttySurfaceView(workingDirectory: session.overlayCwd ?? session.effectiveCwd,
+                                      fontSize: session.fontSize.map(Float.init), command: overlayExitWrapper,
+                                      waitAfterCommand: session.overlayWait, autoFocus: true, env: overlayEnv)
+        view.overlayCodeFile = codeFile
+        // record the exit status on teardown (the surface always tears down through destroySurface), so
+        // it survives an explicit session.overlay.close that bypasses onExit. a session/window force-close
+        // removes the session first, so this no-ops there — but the result is unqueryable after that anyway.
+        view.onExitCodeCaptured = { store.recordOverlayExit(sessionID, code: $0) }
         view.onExit = { store.closeOverlay(sessionID) }
         return view
     }

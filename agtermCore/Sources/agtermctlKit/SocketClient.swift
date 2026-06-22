@@ -129,6 +129,9 @@ struct SocketClient {
         if let text = response.result?.text {
             return text
         }
+        if let exitCode = response.result?.exitCode {
+            return "exit \(exitCode)"
+        }
         if echoID, let id = response.result?.id {
             return id
         }

@@ -249,8 +249,16 @@ public final class AppStore {
         session.overlayCommand = command
         session.overlayCwd = cwd
         session.overlayWait = wait
+        session.overlayExitCode = nil
         session.overlayActive = true
         return true
+    }
+
+    /// Records the overlay program's exit status (parsed app-side from the wrapper's temp file on the
+    /// surface's teardown) so `session.overlay.result` can report it after the overlay closes. No-op
+    /// for an unknown session.
+    public func recordOverlayExit(_ sessionID: UUID, code: Int) {
+        session(withID: sessionID)?.overlayExitCode = code
     }
 
     /// Closes the overlay terminal: hides it AND tears down its surface (unlike the split, the overlay

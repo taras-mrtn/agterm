@@ -102,10 +102,13 @@ With no selection it exits non-zero with `no selection`. The selection must be m
 agtermctl session overlay open "revdiff HEAD~3" --target 9f3c  # review the last 3 commits over session 9f3c
 agtermctl session overlay open "htop"                          # on the active session
 agtermctl session overlay open "make test" --wait              # keep the overlay open after exit (press a key to close)
+agtermctl session overlay open "make test" --block             # block until it exits; exit with its status
 agtermctl session overlay close --target 9f3c                  # close it from a script
 ```
 
 The overlay renders only for the active session, so select it first (or target `active`). By default it closes the instant the program exits; `--wait` keeps it on a "press any key to close" prompt so you can read the program's final output. A `*` `(overlay)` tag in `agtermctl tree` marks a session whose overlay is open.
+
+`--block` runs the program in the overlay (rendering normally) and blocks until it exits, then exits with the program's status — useful in a script that needs the outcome of an interactive run. The program's output stays its own concern: a TUI writes its result to its own file (for example `revdiff --output=…`) which the script reads, while `--block` reports only the exit status (the overlay never captures stdout). `--block` can't be combined with `--wait`; `session overlay result` reports the last overlay's exit status on demand for a manual open → poll flow.
 
 A session's terminal surface is created lazily — it does not exist until the session has been shown at least once. Injecting text into a never-shown session therefore fails with `session not realized` unless you pass `--select`, which selects the session (realizing its surface) before injecting:
 

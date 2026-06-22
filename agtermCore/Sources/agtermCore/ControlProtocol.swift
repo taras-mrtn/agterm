@@ -21,6 +21,7 @@ public enum Command: String, Codable, Sendable {
     case sessionCopy = "session.copy"
     case sessionOverlayOpen = "session.overlay.open"
     case sessionOverlayClose = "session.overlay.close"
+    case sessionOverlayResult = "session.overlay.result"
     case quick
     case notify
     case fontInc = "font.inc"
@@ -183,13 +184,24 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var tree: ControlTree?
     public var text: String?
     public var windows: [ControlWindowNode]?
+    /// The overlay program's exit status for `session.overlay.result` (nil until the program exits).
+    public var exitCode: Int?
 
-    public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil, windows: [ControlWindowNode]? = nil) {
+    public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
+                windows: [ControlWindowNode]? = nil, exitCode: Int? = nil) {
         self.id = id
         self.tree = tree
         self.text = text
         self.windows = windows
+        self.exitCode = exitCode
     }
+}
+
+/// Error strings for `session.overlay.result`, shared so the `agtermctl --block` poll matches the
+/// server's wording exactly (the poll retries while the overlay is still running, by `error` string).
+public enum OverlayResultError {
+    public static let stillRunning = "overlay still running"
+    public static let noResult = "no overlay result"
 }
 
 /// The single response written back per connection. `ok` gates `result` (on success) vs `error`.

@@ -257,6 +257,56 @@ final class ControlAPIUITests: XCTestCase {
                       "the overlay should auto-close when the command exits (no press-any-key prompt)")
     }
 
+    // session.overlay.result reports the overlay program's exit status once it exits (the --block path).
+    // while the program runs, result errors "overlay still running"; after exit it returns result.exitCode.
+    func testOverlayResultReportsExitCode() throws {
+        let created = try sendCommand(#"{"cmd":"session.new"}"#)
+        let result = try XCTUnwrap(created["result"] as? [String: Any], "session.new should carry a result")
+        let id = try XCTUnwrap(result["id"] as? String, "session.new should return the new id")
+
+        let open = try sendCommand(#"{"cmd":"session.overlay.open","target":"\#(id)","args":{"command":"sh -c 'exit 7'"}}"#)
+        XCTAssertEqual(open["ok"] as? Bool, true, "overlay open should succeed: \(open)")
+
+        // poll session.overlay.result (errors while running) until the program exits and the code is reported.
+        var exitCode: Int?
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            let res = try sendCommand(#"{"cmd":"session.overlay.result","target":"\#(id)"}"#)
+            if res["ok"] as? Bool == true {
+                exitCode = (res["result"] as? [String: Any])?["exitCode"] as? Int
+                break
+            }
+            usleep(200_000)
+        }
+        XCTAssertEqual(exitCode, 7, "session.overlay.result should report the program's exit status")
+    }
+
+    // session.overlay.result errors "overlay still running" while the program is up, and "no overlay
+    // result" after a force-close where the program never recorded a status (killed before the wrapper).
+    func testOverlayResultStillRunningThenClosed() throws {
+        let created = try sendCommand(#"{"cmd":"session.new"}"#)
+        let result = try XCTUnwrap(created["result"] as? [String: Any], "session.new should carry a result")
+        let id = try XCTUnwrap(result["id"] as? String, "session.new should return the new id")
+
+        // cat with no input blocks indefinitely, so the overlay stays up.
+        let open = try sendCommand(#"{"cmd":"session.overlay.open","target":"\#(id)","args":{"command":"cat"}}"#)
+        XCTAssertEqual(open["ok"] as? Bool, true, "overlay open should succeed: \(open)")
+        XCTAssertTrue(pollSessionOverlay(id: id, expected: true, timeout: 10), "the overlay should be up")
+
+        let running = try sendCommand(#"{"cmd":"session.overlay.result","target":"\#(id)"}"#)
+        XCTAssertEqual(running["ok"] as? Bool, false, "result should error while the overlay is running")
+        XCTAssertEqual(running["error"] as? String, "overlay still running")
+
+        let closed = try sendCommand(#"{"cmd":"session.overlay.close","target":"\#(id)"}"#)
+        XCTAssertEqual(closed["ok"] as? Bool, true, "overlay close should succeed: \(closed)")
+        XCTAssertTrue(pollSessionOverlay(id: id, expected: false, timeout: 10), "the overlay should be gone")
+
+        // cat was killed before the wrapper's `echo $?`, so no status was recorded.
+        let after = try sendCommand(#"{"cmd":"session.overlay.result","target":"\#(id)"}"#)
+        XCTAssertEqual(after["ok"] as? Bool, false, "result should error when no status was recorded")
+        XCTAssertEqual(after["error"] as? String, "no overlay result")
+    }
+
     // closing an overlay must hand keyboard focus back to the underlying session terminal. this test is
     // DISCRIMINATING: it first proves the overlay actually grabbed keyboard focus (an overlay shell
     // `read` captures a typed line), so the after-close assertion is meaningful — then proves the same

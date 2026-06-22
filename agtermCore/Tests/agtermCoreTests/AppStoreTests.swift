@@ -365,6 +365,30 @@ struct AppStoreTests {
         #expect(session.overlayCommand == "revdiff")
     }
 
+    @Test func overlayExitCodeRecordedAndSurvivesClose() {
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        store.openOverlay(session.id, command: "revdiff")
+        #expect(session.overlayExitCode == nil)
+        store.recordOverlayExit(session.id, code: 10)
+        #expect(store.closeOverlay(session.id) == true)
+        // the exit code survives close (read by session.overlay.result after the overlay vanishes)...
+        #expect(session.overlayExitCode == 10)
+        // ...and is reset when a new overlay opens.
+        #expect(store.openOverlay(session.id, command: "revdiff") == true)
+        #expect(session.overlayExitCode == nil)
+    }
+
+    @Test func recordOverlayExitUnknownSessionIsNoop() {
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        // a bogus id must be a no-op, not a crash, and must not touch any existing session.
+        store.recordOverlayExit(UUID(), code: 5)
+        #expect(session.overlayExitCode == nil)
+    }
+
     @Test func closeOverlayTearsDownAndClears() {
         let store = Self.makeStore()
         let ws = store.addWorkspace(name: "work")

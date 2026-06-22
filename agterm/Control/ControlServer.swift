@@ -431,6 +431,19 @@ final class ControlServer {
                 }
                 return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
             }
+        case .sessionOverlayResult:
+            return resolveSession(request.target, window: request.args?.window) { store, id in
+                guard let session = store.session(withID: id) else {
+                    return ControlResponse(ok: false, error: "no such session")
+                }
+                if session.overlayActive {
+                    return ControlResponse(ok: false, error: OverlayResultError.stillRunning)
+                }
+                guard let code = session.overlayExitCode else {
+                    return ControlResponse(ok: false, error: OverlayResultError.noResult)
+                }
+                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, exitCode: code))
+            }
         case .quick:
             return setQuickTerminal(mode: request.args?.mode)
         case .notify:

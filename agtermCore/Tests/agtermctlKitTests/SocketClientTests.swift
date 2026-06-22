@@ -91,6 +91,50 @@ struct SocketClientTests {
         #expect(throws: ExitCode.failure) { try command.run() }
     }
 
+    // the --block path: open → poll session.overlay.result (retry while still running) → exit with the
+    // captured status. drives the real run() against a scripted multi-connection server.
+    @Test func blockPollsResultThenExitsWithStatus() throws {
+        let script = OverlayResultScript(stillRunningTimes: 1,
+                                         finalResult: ControlResponse(ok: true, result: ControlResult(id: "abc", exitCode: 7)))
+        let server = ScriptedStubServer(responder: script.respond)
+        try server.start()
+        defer { server.stop() }
+
+        let command = try Session.Overlay.Open.parse(["echo", "--block", "--socket", server.path])
+        do {
+            try command.run()
+            Issue.record("expected --block to exit with the program's status")
+        } catch let code as ExitCode {
+            #expect(code.rawValue == 7)
+        }
+    }
+
+    // an ok result with no exitCode is a protocol violation → --block fails, never exits 0.
+    @Test func blockFailsWhenResultMissingExitCode() throws {
+        let script = OverlayResultScript(stillRunningTimes: 0,
+                                         finalResult: ControlResponse(ok: true, result: ControlResult(id: "abc")))
+        let server = ScriptedStubServer(responder: script.respond)
+        try server.start()
+        defer { server.stop() }
+
+        let command = try Session.Overlay.Open.parse(["echo", "--block", "--socket", server.path])
+        #expect(throws: ExitCode.failure) { try command.run() }
+    }
+
+    // a failed open short-circuits --block before any poll.
+    @Test func blockFailsWhenOpenFails() throws {
+        let server = ScriptedStubServer { req in
+            req.cmd == .sessionOverlayOpen
+                ? ControlResponse(ok: false, error: "overlay already open")
+                : ControlResponse(ok: false, error: "unexpected")
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let command = try Session.Overlay.Open.parse(["echo", "--block", "--socket", server.path])
+        #expect(throws: ExitCode.failure) { try command.run() }
+    }
+
     @Test func formatResponseBareOk() {
         #expect(SocketClient.formatResponse(ControlResponse(ok: true), json: false) == "ok")
     }
@@ -252,5 +296,115 @@ private final class StubServer: @unchecked Sendable {
     func stop() {
         if listenFD >= 0 { close(listenFD); listenFD = -1 }
         unlink(path)
+    }
+}
+
+/// A multi-connection unix-socket server: accepts connections in a loop until `stop()`, answering each
+/// request via `responder`. Used to drive the `--block` flow, which makes several round trips (open,
+/// then one connection per `session.overlay.result` poll).
+private final class ScriptedStubServer: @unchecked Sendable {
+    let path: String
+    private let responder: @Sendable (ControlRequest) -> ControlResponse
+    private var listenFD: Int32 = -1
+    private let queue = DispatchQueue(label: "scripted.stub.server")
+
+    init(responder: @escaping @Sendable (ControlRequest) -> ControlResponse) {
+        self.responder = responder
+        self.path = NSTemporaryDirectory() + "agterm-scripted-\(UUID().uuidString.prefix(8)).sock"
+    }
+
+    func start() throws {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw SocketClientError("scripted socket() failed") }
+        unlink(path)
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = path.utf8CString
+        withUnsafeMutablePointer(to: &addr.sun_path) { dst in
+            dst.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { buf in
+                pathBytes.withUnsafeBufferPointer { src in buf.update(from: src.baseAddress!, count: src.count) }
+            }
+        }
+        let bound = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                bind(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0 else {
+            close(fd)
+            throw SocketClientError("scripted bind failed: \(String(cString: strerror(errno)))")
+        }
+        guard listen(fd, 4) == 0 else {
+            close(fd)
+            throw SocketClientError("scripted listen failed")
+        }
+        listenFD = fd
+        queue.async { [self] in acceptLoop(fd) }
+    }
+
+    private func acceptLoop(_ fd: Int32) {
+        while true {
+            let conn = Darwin.accept(fd, nil, nil)
+            if conn < 0 { return }  // listen fd closed by stop()
+            handle(conn)
+            close(conn)
+        }
+    }
+
+    private func handle(_ conn: Int32) {
+        var buffer = Data()
+        var byte: UInt8 = 0
+        while true {
+            let n = read(conn, &byte, 1)
+            if n <= 0 { return }
+            if byte == UInt8(ascii: "\n") { break }
+            buffer.append(byte)
+        }
+        guard let request = try? JSONDecoder().decode(ControlRequest.self, from: buffer) else { return }
+        guard var data = try? JSONEncoder().encode(responder(request)) else { return }
+        data.append(UInt8(ascii: "\n"))
+        data.withUnsafeBytes { raw in
+            var offset = 0
+            let base = raw.bindMemory(to: UInt8.self).baseAddress!
+            while offset < data.count {
+                let written = write(conn, base + offset, data.count - offset)
+                if written <= 0 { break }
+                offset += written
+            }
+        }
+    }
+
+    func stop() {
+        if listenFD >= 0 { close(listenFD); listenFD = -1 }
+        unlink(path)
+    }
+}
+
+/// Scripts the `--block` round trips: `session.overlay.open` returns a fixed id; `session.overlay.result`
+/// errors `stillRunning` for the first `stillRunningTimes` calls, then returns `finalResult`.
+private final class OverlayResultScript: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resultCalls = 0
+    private let stillRunningTimes: Int
+    private let finalResult: ControlResponse
+
+    init(stillRunningTimes: Int, finalResult: ControlResponse) {
+        self.stillRunningTimes = stillRunningTimes
+        self.finalResult = finalResult
+    }
+
+    func respond(_ request: ControlRequest) -> ControlResponse {
+        switch request.cmd {
+        case .sessionOverlayOpen:
+            return ControlResponse(ok: true, result: ControlResult(id: "abc"))
+        case .sessionOverlayResult:
+            lock.lock(); resultCalls += 1; let n = resultCalls; lock.unlock()
+            return n <= stillRunningTimes
+                ? ControlResponse(ok: false, error: OverlayResultError.stillRunning)
+                : finalResult
+        default:
+            return ControlResponse(ok: false, error: "unexpected cmd \(request.cmd)")
+        }
     }
 }

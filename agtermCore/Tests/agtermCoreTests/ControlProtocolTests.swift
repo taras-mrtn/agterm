@@ -41,6 +41,7 @@ struct ControlProtocolTests {
             ControlRequest(cmd: .sessionCopy, target: "9f3c"),
             ControlRequest(cmd: .sessionOverlayOpen, target: "9f3c", args: ControlArgs(cwd: "/b", command: "revdiff")),
             ControlRequest(cmd: .sessionOverlayClose, target: "9f3c"),
+            ControlRequest(cmd: .sessionOverlayResult, target: "9f3c"),
         ]
         for request in cases {
             #expect(try roundTrip(request) == request)
@@ -155,6 +156,13 @@ struct ControlProtocolTests {
         let decoded = try roundTrip(response)
         #expect(decoded == response)
         #expect(decoded.result?.text == "selected\nlines")
+    }
+
+    @Test func responseOkWithExitCodeRoundTrips() throws {
+        let response = ControlResponse(ok: true, result: ControlResult(id: "9f3c", exitCode: 10))
+        let decoded = try roundTrip(response)
+        #expect(decoded == response)
+        #expect(decoded.result?.exitCode == 10)
     }
 
     @Test func responseOkWithWindowsRoundTrips() throws {

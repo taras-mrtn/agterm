@@ -97,7 +97,11 @@ protocol RequestCommand: ParsableCommand {
 
 extension RequestCommand {
     var echoesResultID: Bool { false }
-    public func run() throws {
+    public func run() throws { try defaultRun() }
+
+    /// The default behavior: send the request once and print the response. Named separately so a command
+    /// that overrides `run()` (the `--block` overlay path) can still reach the single-round-trip path.
+    func defaultRun() throws {
         let request = try makeRequest()
         let client = SocketClient(path: options.socketPath())
         let response = try client.send(request)
@@ -300,7 +304,7 @@ struct Session: ParsableCommand {
     struct Overlay: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Open or close an ephemeral overlay terminal on a session.",
-            subcommands: [Open.self, Close.self]
+            subcommands: [Open.self, Close.self, Result.self]
         )
 
         struct Open: RequestCommand {
@@ -308,12 +312,52 @@ struct Session: ParsableCommand {
             @Argument(help: "Program to run in the overlay (e.g. revdiff).") var command: String
             @Option(name: .long, help: "Working directory (default: the session's current directory).") var cwd: String?
             @Flag(name: .long, help: "Keep the overlay open after COMMAND exits (press any key to close).") var wait = false
+            @Flag(name: .long, help: "Block until COMMAND exits and exit with its status (the program renders normally; capture its output via the program's own output file).") var block = false
             @OptionGroup var target: TargetOptions
             @OptionGroup var options: ClientOptions
+
+            // reject the mutually-exclusive combo at parse time (before any connection), so it's a clean
+            // usage error and is unit-testable without a socket.
+            func validate() throws {
+                if block && wait { throw ValidationError("--block cannot be combined with --wait") }
+            }
 
             func makeRequest() throws -> ControlRequest {
                 ControlRequest(cmd: .sessionOverlayOpen, target: target.target,
                                args: options.withWindow(ControlArgs(cwd: cwd, command: command, wait: wait ? true : nil)))
+            }
+
+            func run() throws {
+                guard block else { try defaultRun(); return }
+                let client = SocketClient(path: options.socketPath())
+                // open non-wait so the overlay closes on exit and the exit status becomes readable.
+                let opened = try client.send(ControlRequest(cmd: .sessionOverlayOpen, target: target.target,
+                                                            args: options.withWindow(ControlArgs(cwd: cwd, command: command))))
+                guard opened.ok, let id = opened.result?.id else {
+                    SocketClient.printResponse(opened, json: options.json)
+                    throw ExitCode.failure
+                }
+                // poll session.overlay.result until the program exits. target the returned id with NO
+                // window scope: the id is globally unique and resolves cross-window, so a frontmost-window
+                // change during the run can't make the poll miss the session.
+                while true {
+                    let res = try client.send(ControlRequest(cmd: .sessionOverlayResult, target: id))
+                    if res.ok {
+                        if options.json { SocketClient.printResponse(res, json: true) }
+                        // a successful result must carry the status; its absence is a protocol violation, not success.
+                        guard let code = res.result?.exitCode else {
+                            FileHandle.standardError.write(Data("error: result missing exit code\n".utf8))
+                            throw ExitCode.failure
+                        }
+                        throw ExitCode(rawValue: Int32(code))
+                    }
+                    if res.error == OverlayResultError.stillRunning {
+                        Thread.sleep(forTimeInterval: 0.1)
+                        continue
+                    }
+                    SocketClient.printResponse(res, json: options.json)
+                    throw ExitCode.failure
+                }
             }
         }
 
@@ -324,6 +368,16 @@ struct Session: ParsableCommand {
 
             func makeRequest() throws -> ControlRequest {
                 ControlRequest(cmd: .sessionOverlayClose, target: target.target, args: options.withWindow())
+            }
+        }
+
+        struct Result: RequestCommand {
+            static let configuration = CommandConfiguration(abstract: "Print the overlay program's exit status (errors if it is still running or never ran).")
+            @OptionGroup var target: TargetOptions
+            @OptionGroup var options: ClientOptions
+
+            func makeRequest() throws -> ControlRequest {
+                ControlRequest(cmd: .sessionOverlayResult, target: target.target, args: options.withWindow())
             }
         }
     }

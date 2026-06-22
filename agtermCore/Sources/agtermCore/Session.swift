@@ -97,6 +97,12 @@ public final class Session: Identifiable {
     /// immediately. Read by the factory at creation. `@ObservationIgnored`.
     @ObservationIgnored public var overlayWait: Bool = false
 
+    /// The overlay program's exit status, recorded on the surface's teardown from the wrapper's
+    /// `echo $?` temp file (NOT libghostty's child-exited status, which reflects the login-shell
+    /// wrapper and is always 0). Reset to nil when a new overlay opens; read by `session.overlay.result`.
+    /// In-memory only (absent from `snapshot()`), so it never persists.
+    @ObservationIgnored public var overlayExitCode: Int?
+
     public init(id: UUID = UUID(), initialCwd: String, customName: String? = nil) {
         self.id = id
         self.initialCwd = initialCwd
