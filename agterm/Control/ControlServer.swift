@@ -382,18 +382,10 @@ final class ControlServer {
                 return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
             }
         case .sessionMove:
-            guard let workspace = request.args?.workspace else {
-                return ControlResponse(ok: false, error: "session.move requires a workspace")
-            }
-            // the session and the destination workspace must live in the same store: resolve the
-            // session first (which fixes the store), then the workspace within that same store.
-            return resolveSession(request.target, window: request.args?.window) { store, sessionID in
-                resolve(workspace, candidates: store.workspaces.map(\.id),
-                        active: store.currentWorkspaceID, noun: "workspace") { workspaceID in
-                    store.moveSession(sessionID, toWorkspace: workspaceID)
-                    return ControlResponse(ok: true, result: ControlResult(id: sessionID.uuidString))
-                }
-            }
+            return moveSession(request.target, window: request.args?.window,
+                               to: request.args?.to, workspace: request.args?.workspace)
+        case .workspaceMove:
+            return moveWorkspace(request.target, window: request.args?.window, to: request.args?.to)
         case .sessionType:
             guard let text = request.args?.text else {
                 return ControlResponse(ok: false, error: "session.type requires text")
@@ -530,6 +522,52 @@ final class ControlServer {
             default: return ControlResponse(ok: false, error: "invalid pane: \(pane)")
             }
             actions.setSplitFocus(toSplit, of: session)
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
+    /// Mode-bearing `session.move`: `to` reorders the session within its own workspace
+    /// (`up`|`down`|`top`|`bottom`), `workspace` relocates it to another workspace (appending). Exactly
+    /// one of the two is required; both set or neither set is an error. An invalid `to` direction errors.
+    private func moveSession(_ target: String?, window: String?, to: String?, workspace: String?) -> ControlResponse {
+        if to != nil && workspace != nil {
+            return ControlResponse(ok: false, error: "session.move takes either --to or a workspace, not both")
+        }
+        if let to {
+            guard let dir = ReorderDirection(rawValue: to) else {
+                return ControlResponse(ok: false, error: "session.move --to must be up|down|top|bottom")
+            }
+            return resolveSession(target, window: window) { store, id in
+                store.reorderSession(id, dir)
+                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+            }
+        }
+        guard let workspace else {
+            return ControlResponse(ok: false, error: "session.move requires --to or a workspace")
+        }
+        // the session and the destination workspace must live in the same store: resolve the
+        // session first (which fixes the store), then the workspace within that same store.
+        return resolveSession(target, window: window) { store, sessionID in
+            resolve(workspace, candidates: store.workspaces.map(\.id),
+                    active: store.currentWorkspaceID, noun: "workspace") { workspaceID in
+                store.moveSession(sessionID, toWorkspace: workspaceID)
+                return ControlResponse(ok: true, result: ControlResult(id: sessionID.uuidString))
+            }
+        }
+    }
+
+    /// `workspace.move`: reorder a workspace among its siblings (`up`|`down`|`top`|`bottom`). `to` is
+    /// required; an invalid direction errors. Resolves the workspace target via `resolveWorkspace`
+    /// (honoring the global `--window` selector like other workspace commands).
+    private func moveWorkspace(_ target: String?, window: String?, to: String?) -> ControlResponse {
+        guard let to else {
+            return ControlResponse(ok: false, error: "workspace.move requires --to")
+        }
+        guard let dir = ReorderDirection(rawValue: to) else {
+            return ControlResponse(ok: false, error: "workspace.move --to must be up|down|top|bottom")
+        }
+        return resolveWorkspace(target, window: window) { store, id in
+            store.reorderWorkspace(id, dir)
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }

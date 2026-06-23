@@ -348,15 +348,15 @@ final class ControlAPIUITests: XCTestCase {
         XCTAssertEqual(close["ok"] as? Bool, true, "overlay close should succeed: \(close)")
         XCTAssertTrue(pollSessionOverlay(id: id, expected: false, timeout: 10), "the overlay should be gone")
 
-        // let focus settle after the overlay tears down, then type via the keyboard again: it must now
-        // reach the underlying session shell (same tty), proving focus returned.
-        usleep(800_000)
+        // after the overlay tears down, type via the keyboard again: it must now reach the underlying
+        // session shell (same tty), proving focus returned. focus return is async (focusAfterReparent is a
+        // bounded makeFirstResponder retry that wins the teardown/re-host race over a few run-loop turns),
+        // so a single fixed-sleep keystroke burst can land before first responder is the session and be
+        // lost. re-type until the marker appears (same idiom as typeUntilMarker for surface-readiness):
+        // re-typing the tty line is idempotent — once focus is correct one burst writes the tty.
         let afterTTY = markerDir.appendingPathComponent("after-close-tty")
-        app.typeText("tty > '\(afterTTY.path)'")
-        app.typeKey(.return, modifierFlags: [])
-
-        let afterValue = try XCTUnwrap(pollMarker(afterTTY, timeout: 12),
-                                       "after overlay close, keyboard focus should return to the session terminal")
+        let afterValue = keyboardTypeUntilMarker("tty > '\(afterTTY.path)'", file: afterTTY)
+        XCTAssertNotNil(afterValue, "after overlay close, keyboard focus should return to the session terminal")
         XCTAssertEqual(afterValue, sessionTtyValue, "focus should return to the SAME session terminal, not be lost")
     }
 
@@ -553,11 +553,108 @@ final class ControlAPIUITests: XCTestCase {
                       "the session should leave workspace 1 (0) and land in the destination (1)")
     }
 
-    // session.move with no workspace arg returns the structured missing-arg guard.
+    // session.move with neither --to nor a workspace returns the structured missing-arg guard.
     func testSessionMoveRequiresWorkspace() throws {
         let response = try sendCommand(#"{"cmd":"session.move","target":"active"}"#)
-        XCTAssertEqual(response["ok"] as? Bool, false, "session.move without a workspace should fail")
-        XCTAssertEqual(response["error"] as? String, "session.move requires a workspace", "should return the guard: \(response)")
+        XCTAssertEqual(response["ok"] as? Bool, false, "session.move without --to or a workspace should fail")
+        XCTAssertEqual(response["error"] as? String, "session.move requires --to or a workspace", "should return the guard: \(response)")
+    }
+
+    // session.move with BOTH --to and a workspace is ambiguous and returns the either/or guard.
+    func testSessionMoveBothToAndWorkspaceErrors() throws {
+        let response = try sendCommand(#"{"cmd":"session.move","target":"active","args":{"to":"up","workspace":"active"}}"#)
+        XCTAssertEqual(response["ok"] as? Bool, false, "session.move with both --to and a workspace should fail")
+        XCTAssertEqual(response["error"] as? String, "session.move takes either --to or a workspace, not both",
+                       "should return the either/or guard: \(response)")
+    }
+
+    // session.move with an invalid --to direction returns the direction guard.
+    func testSessionMoveInvalidDirectionErrors() throws {
+        let response = try sendCommand(#"{"cmd":"session.move","target":"active","args":{"to":"sideways"}}"#)
+        XCTAssertEqual(response["ok"] as? Bool, false, "an invalid direction should fail: \(response)")
+        XCTAssertEqual(response["error"] as? String, "session.move --to must be up|down|top|bottom",
+                       "should return the direction guard: \(response)")
+    }
+
+    // workspace.move without --to returns the structured missing-arg guard.
+    func testWorkspaceMoveRequiresTo() throws {
+        let response = try sendCommand(#"{"cmd":"workspace.move","target":"active"}"#)
+        XCTAssertEqual(response["ok"] as? Bool, false, "workspace.move without --to should fail")
+        XCTAssertEqual(response["error"] as? String, "workspace.move requires --to",
+                       "should return the missing-arg guard: \(response)")
+    }
+
+    // workspace.move with an invalid --to direction returns the direction guard.
+    func testWorkspaceMoveInvalidDirectionErrors() throws {
+        let response = try sendCommand(#"{"cmd":"workspace.move","target":"active","args":{"to":"sideways"}}"#)
+        XCTAssertEqual(response["ok"] as? Bool, false, "an invalid direction should fail: \(response)")
+        XCTAssertEqual(response["error"] as? String, "workspace.move --to must be up|down|top|bottom",
+                       "should return the direction guard: \(response)")
+    }
+
+    // session.move --to reorders a session within its own workspace: seed three sessions in order,
+    // move the last UP one step (B,A,C... ) and then the first to the TOP; assert the json order tracks it.
+    func testSessionMoveReorderWithinWorkspace() throws {
+        let firstID = UUID(uuidString: "A1110000-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "A2220000-0000-0000-0000-000000000002")!
+        let thirdID = UUID(uuidString: "A3330000-0000-0000-0000-000000000003")!
+        let snapshot = """
+        {"version":1,"selectedSessionID":"\(firstID.uuidString)","workspaces":[\
+        {"id":"\(UUID().uuidString)","name":"workspace 1","sessions":[\
+        {"id":"\(firstID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(secondID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(thirdID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]}]}
+        """
+        try relaunch(withSnapshot: snapshot)
+        XCTAssertTrue(pollSessionOrder([firstID, secondID, thirdID], timeout: 10), "should start in seeded order")
+
+        // move the third session up one step: [first, second, third] -> [first, third, second].
+        let up = try sendCommand(#"{"cmd":"session.move","target":"\#(thirdID.uuidString)","args":{"to":"up"}}"#)
+        XCTAssertEqual(up["ok"] as? Bool, true, "session.move --to up should succeed: \(up)")
+        XCTAssertTrue(pollSessionOrder([firstID, thirdID, secondID], timeout: 10), "up should swap third above second")
+
+        // move the first session to the top of the (now [first, third, second]) list — already top -> no-op,
+        // so move it to the bottom to prove a non-trivial reorder, then top again to land it back at index 0.
+        let bottom = try sendCommand(#"{"cmd":"session.move","target":"\#(firstID.uuidString)","args":{"to":"bottom"}}"#)
+        XCTAssertEqual(bottom["ok"] as? Bool, true, "session.move --to bottom should succeed: \(bottom)")
+        XCTAssertTrue(pollSessionOrder([thirdID, secondID, firstID], timeout: 10), "bottom should move first to the end")
+
+        let top = try sendCommand(#"{"cmd":"session.move","target":"\#(firstID.uuidString)","args":{"to":"top"}}"#)
+        XCTAssertEqual(top["ok"] as? Bool, true, "session.move --to top should succeed: \(top)")
+        XCTAssertTrue(pollSessionOrder([firstID, thirdID, secondID], timeout: 10), "top should move first back to index 0")
+    }
+
+    // workspace.move --to reorders a workspace among its siblings: seed three workspaces, move the last
+    // to the top and then one up; assert the json workspace-name order tracks it.
+    func testWorkspaceMoveReorder() throws {
+        let snapshot = """
+        {"version":1,"selectedSessionID":null,"workspaces":[\
+        {"id":"\(UUID().uuidString)","name":"alpha","sessions":[\
+        {"id":"\(UUID().uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]},\
+        {"id":"\(UUID().uuidString)","name":"beta","sessions":[\
+        {"id":"\(UUID().uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]},\
+        {"id":"\(UUID().uuidString)","name":"gamma","sessions":[\
+        {"id":"\(UUID().uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]}]}
+        """
+        try relaunch(withSnapshot: snapshot)
+        XCTAssertTrue(pollWorkspaceNames(["alpha", "beta", "gamma"], timeout: 10), "should start in seeded order")
+
+        // capture gamma's id (the last workspace) from the tree, then move it to the top.
+        let tree = try sendCommand(#"{"cmd":"tree"}"#)
+        let treeResult = try XCTUnwrap(tree["result"] as? [String: Any], "tree should carry a result")
+        let root = try XCTUnwrap(treeResult["tree"] as? [String: Any], "result should carry a tree")
+        let workspaces = try XCTUnwrap(root["workspaces"] as? [[String: Any]], "tree should list workspaces")
+        let gammaID = try XCTUnwrap(workspaces.first(where: { ($0["name"] as? String) == "gamma" })?["id"] as? String,
+                                    "should find gamma's id")
+
+        let top = try sendCommand(#"{"cmd":"workspace.move","target":"\#(gammaID)","args":{"to":"top"}}"#)
+        XCTAssertEqual(top["ok"] as? Bool, true, "workspace.move --to top should succeed: \(top)")
+        XCTAssertTrue(pollWorkspaceNames(["gamma", "alpha", "beta"], timeout: 10), "top should move gamma to index 0")
+
+        // move gamma down one step: [gamma, alpha, beta] -> [alpha, gamma, beta].
+        let down = try sendCommand(#"{"cmd":"workspace.move","target":"\#(gammaID)","args":{"to":"down"}}"#)
+        XCTAssertEqual(down["ok"] as? Bool, true, "workspace.move --to down should succeed: \(down)")
+        XCTAssertTrue(pollWorkspaceNames(["alpha", "gamma", "beta"], timeout: 10), "down should move gamma below alpha")
     }
 
     // session.rename with no name arg returns the structured missing-arg guard.
@@ -747,10 +844,8 @@ final class ControlAPIUITests: XCTestCase {
         let sessionID = try XCTUnwrap(addedResult["id"] as? String, "session.new should return the new session id")
 
         // raise window A so it becomes frontmost (window B was frontmost right after window.new).
-        XCTAssertEqual(try sendCommand(#"{"cmd":"window.select","target":"\#(windowA)"}"#)["ok"] as? Bool, true)
-        XCTAssertTrue(pollWindowList(timeout: 10) { list in
-            list.first(where: { ($0["id"] as? String)?.lowercased() == windowA.lowercased() })?["active"] as? Bool == true
-        }, "window A should become active")
+        XCTAssertTrue(selectWindowUntilActive(windowA, timeout: 15),
+                      "window A should become active")
 
         // select the B-session by id with NO --window: it resolves cross-window to window B's store.
         let selected = try sendCommand(#"{"cmd":"session.select","target":"\#(sessionID)"}"#)
@@ -823,6 +918,24 @@ final class ControlAPIUITests: XCTestCase {
         XCTAssertEqual(response["ok"] as? Bool, true, "window.list should succeed: \(response)")
         let result = try XCTUnwrap(response["result"] as? [String: Any], "window.list should carry a result")
         return try XCTUnwrap(result["windows"] as? [[String: Any]], "window.list should return windows")
+    }
+
+    /// Re-issues `window.select` for `id` while polling `window.list` for that window's `active` flag.
+    /// `window.select` returns ok as soon as the window is OPEN, not when it has become key — and the
+    /// `active` flag flips only on the async `didBecomeKey`/`didBecomeMain`, which macOS can drop or
+    /// delay under XCUITest (a `makeKeyAndOrderFront` that doesn't take is never re-issued by a single
+    /// select). Re-selecting (idempotent: raises again) recovers a dropped activation; `app.activate()`
+    /// first so the app is the active application (a window can't become key while the app is inactive).
+    private func selectWindowUntilActive(_ id: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            app.activate()
+            _ = try? sendCommand(#"{"cmd":"window.select","target":"\#(id)"}"#)
+            if pollWindowList(timeout: 2, { list in
+                list.first(where: { ($0["id"] as? String)?.lowercased() == id.lowercased() })?["active"] as? Bool == true
+            }) { return true }
+        }
+        return false
     }
 
     /// Polls `window.list` until `predicate` holds, or times out.
@@ -919,6 +1032,22 @@ final class ControlAPIUITests: XCTestCase {
         return nil
     }
 
+    /// Types `command` + Return via the real keyboard (XCUI `typeText`), retrying until `file` reports a
+    /// non-empty marker. The keyboard routes to whatever holds first responder, and focus return after an
+    /// overlay/pane teardown is async (a bounded makeFirstResponder retry), so the first burst can land
+    /// before the session is first responder and be dropped. Re-typing each attempt is idempotent for a
+    /// `cmd > file` command. Returns the marker contents, or nil if it never appeared across all attempts.
+    private func keyboardTypeUntilMarker(_ command: String, file: URL,
+                                         attempts: Int = 6, perAttempt: TimeInterval = 2.5) -> String? {
+        for _ in 0..<attempts {
+            try? FileManager.default.removeItem(at: file)
+            app.typeText(command)
+            app.typeKey(.return, modifierFlags: [])
+            if let value = pollMarker(file, timeout: perAttempt) { return value }
+        }
+        return nil
+    }
+
     /// Inject `command` (which redirects to `file`) and wait for the shell to write it back, retrying the
     /// inject if the marker hasn't appeared yet. A freshly-realized surface's shell/pty may not be ready to
     /// read when the first keystrokes land (especially under full-suite CPU load), so a single injection can
@@ -942,53 +1071,28 @@ final class ControlAPIUITests: XCTestCase {
 
     /// Polls the hermetic snapshot file until the (single) seeded workspace holds `expected` sessions.
     private func pollSessionCount(_ expected: Int, timeout: TimeInterval) -> Bool {
-        let file = stateDir.windowSnapshotFile()
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let data = try? Data(contentsOf: file),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let workspaces = obj["workspaces"] as? [[String: Any]],
-               let ws = workspaces.first,
-               ((ws["sessions"] as? [[String: Any]])?.count ?? -1) == expected {
-                return true
-            }
-            usleep(200_000)
+        stateDir.pollSnapshot(equals: expected, timeout: timeout) { obj in
+            guard let workspaces = obj["workspaces"] as? [[String: Any]], let ws = workspaces.first else { return nil }
+            return (ws["sessions"] as? [[String: Any]])?.count ?? -1
         }
-        return false
     }
 
     /// Polls the hermetic snapshot file until each workspace's session count equals `expected`, in order.
     private func pollSessionCounts(_ expected: [Int], timeout: TimeInterval) -> Bool {
-        let file = stateDir.windowSnapshotFile()
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let data = try? Data(contentsOf: file),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let workspaces = obj["workspaces"] as? [[String: Any]],
-               workspaces.map({ ($0["sessions"] as? [[String: Any]])?.count ?? -1 }) == expected {
-                return true
-            }
-            usleep(200_000)
+        stateDir.pollSnapshot(equals: expected, timeout: timeout) { obj in
+            guard let workspaces = obj["workspaces"] as? [[String: Any]] else { return nil }
+            return workspaces.map { ($0["sessions"] as? [[String: Any]])?.count ?? -1 }
         }
-        return false
     }
 
     /// Polls the hermetic snapshot file until the (single seeded workspace's) first session's `isSplit`
     /// equals `expected`.
     private func pollActiveSessionSplit(_ expected: Bool, timeout: TimeInterval) -> Bool {
-        let file = stateDir.windowSnapshotFile()
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let data = try? Data(contentsOf: file),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let workspaces = obj["workspaces"] as? [[String: Any]],
-               let sessions = workspaces.first?["sessions"] as? [[String: Any]],
-               (sessions.first?["isSplit"] as? Bool ?? false) == expected {
-                return true
-            }
-            usleep(200_000)
+        stateDir.pollSnapshot(equals: expected, timeout: timeout) { obj in
+            guard let workspaces = obj["workspaces"] as? [[String: Any]],
+                  let sessions = workspaces.first?["sessions"] as? [[String: Any]] else { return nil }
+            return sessions.first?["isSplit"] as? Bool ?? false
         }
-        return false
     }
 
     /// Polls `tree` (overlay state is not persisted to workspaces.json) until the session with `id` has
@@ -1014,51 +1118,38 @@ final class ControlAPIUITests: XCTestCase {
 
     /// Polls the hermetic snapshot file until `selectedSessionID` equals `expected`.
     private func pollActiveSessionID(_ expected: UUID, timeout: TimeInterval) -> Bool {
-        let file = stateDir.windowSnapshotFile()
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let data = try? Data(contentsOf: file),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               (obj["selectedSessionID"] as? String)?.lowercased() == expected.uuidString.lowercased() {
-                return true
-            }
-            usleep(200_000)
+        stateDir.pollSnapshot(equals: expected.uuidString.lowercased(), timeout: timeout) { obj in
+            (obj["selectedSessionID"] as? String)?.lowercased()
         }
-        return false
     }
 
     /// Polls the hermetic snapshot file until the (single seeded workspace's) first session's `customName`
     /// equals `expected`.
     private func pollFirstSessionName(_ expected: String, timeout: TimeInterval) -> Bool {
-        let file = stateDir.windowSnapshotFile()
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let data = try? Data(contentsOf: file),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let workspaces = obj["workspaces"] as? [[String: Any]],
-               let sessions = workspaces.first?["sessions"] as? [[String: Any]],
-               (sessions.first?["customName"] as? String) == expected {
-                return true
-            }
-            usleep(200_000)
+        stateDir.pollSnapshot(equals: expected, timeout: timeout) { obj in
+            guard let workspaces = obj["workspaces"] as? [[String: Any]],
+                  let sessions = workspaces.first?["sessions"] as? [[String: Any]] else { return nil }
+            return sessions.first?["customName"] as? String
         }
-        return false
+    }
+
+    /// Polls the hermetic snapshot file until the (single seeded workspace's) session ids equal
+    /// `expected`, in order (case-insensitive compare).
+    private func pollSessionOrder(_ expected: [UUID], timeout: TimeInterval) -> Bool {
+        let wanted = expected.map { $0.uuidString.lowercased() }
+        return stateDir.pollSnapshot(equals: wanted, timeout: timeout) { obj in
+            guard let workspaces = obj["workspaces"] as? [[String: Any]],
+                  let sessions = workspaces.first?["sessions"] as? [[String: Any]] else { return nil }
+            return sessions.compactMap { ($0["id"] as? String)?.lowercased() }
+        }
     }
 
     /// Polls the hermetic snapshot file until the workspace names equal `expected`, in order.
     private func pollWorkspaceNames(_ expected: [String], timeout: TimeInterval) -> Bool {
-        let file = stateDir.windowSnapshotFile()
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let data = try? Data(contentsOf: file),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let workspaces = obj["workspaces"] as? [[String: Any]],
-               workspaces.compactMap({ $0["name"] as? String }) == expected {
-                return true
-            }
-            usleep(200_000)
+        stateDir.pollSnapshot(equals: expected, timeout: timeout) { obj in
+            guard let workspaces = obj["workspaces"] as? [[String: Any]] else { return nil }
+            return workspaces.compactMap { $0["name"] as? String }
         }
-        return false
     }
 
     // MARK: - Socket client

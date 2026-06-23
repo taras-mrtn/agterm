@@ -15,6 +15,7 @@ public enum Command: String, Codable, Sendable {
     case sessionGo = "session.go"
     case sessionRename = "session.rename"
     case sessionMove = "session.move"
+    case workspaceMove = "workspace.move"
     case sessionType = "session.type"
     case sessionSplit = "session.split"
     case sessionFocus = "session.focus"
@@ -54,7 +55,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var mode: String?
     /// Which split pane to focus for `session.focus` (`left`|`right`|`other`; `other` toggles).
     public var pane: String?
-    /// Navigation direction for `session.go` (`next`|`prev`|`previous`|`first`|`last`).
+    /// Direction for `session.go` (`next`|`prev`|`previous`|`first`|`last`) and for the reorder form of
+    /// `session.move` / `workspace.move` (`up`|`down`|`top`|`bottom`).
     public var to: String?
     /// The desktop-notification title for `notify` (optional; defaults to the target session's name).
     public var title: String?

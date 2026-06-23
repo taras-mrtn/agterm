@@ -86,6 +86,30 @@ struct ControlProtocolTests {
         #expect(decoded.args?.to == "next")
     }
 
+    @Test func sessionMoveReorderRoundTripsWithDirection() throws {
+        let request = ControlRequest(cmd: .sessionMove, target: "9f3c", args: ControlArgs(to: "up"))
+        let decoded = try roundTrip(request)
+        #expect(decoded == request)
+        #expect(decoded.cmd == .sessionMove)
+        #expect(decoded.args?.to == "up")
+        #expect(decoded.args?.workspace == nil)
+    }
+
+    @Test func workspaceMoveRoundTripsWithDirection() throws {
+        let request = ControlRequest(cmd: .workspaceMove, target: "active", args: ControlArgs(to: "top"))
+        let decoded = try roundTrip(request)
+        #expect(decoded == request)
+        #expect(decoded.cmd == .workspaceMove)
+        #expect(decoded.args?.to == "top")
+    }
+
+    @Test func workspaceMoveRawStringMapsToCommand() throws {
+        let json = #"{"cmd":"workspace.move","target":"active","args":{"to":"bottom"}}"#
+        let decoded = try JSONDecoder().decode(ControlRequest.self, from: Data(json.utf8))
+        #expect(decoded.cmd == .workspaceMove)
+        #expect(decoded.args?.to == "bottom")
+    }
+
     @Test func notifyRoundTripsWithTitleAndBody() throws {
         let request = ControlRequest(cmd: .notify, target: "active", args: ControlArgs(title: "Build", body: "done"))
         let decoded = try roundTrip(request)
