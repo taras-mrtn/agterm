@@ -126,7 +126,7 @@ struct Tree: RequestCommand {
 struct Workspace: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Workspace commands.",
-        subcommands: [New.self, Rename.self, Delete.self, Select.self]
+        subcommands: [New.self, Rename.self, Delete.self, Select.self, Move.self]
     )
 
     struct New: RequestCommand {
@@ -168,6 +168,17 @@ struct Workspace: ParsableCommand {
 
         func makeRequest() throws -> ControlRequest {
             ControlRequest(cmd: .workspaceSelect, target: target.target, args: options.withWindow())
+        }
+    }
+
+    struct Move: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Reorder a workspace among its siblings.")
+        @Option(name: .long, help: "Direction: up, down, top, or bottom.") var to: String
+        @OptionGroup var target: TargetOptions
+        @OptionGroup var options: ClientOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .workspaceMove, target: target.target, args: options.withWindow(ControlArgs(to: to)))
         }
     }
 }
@@ -235,13 +246,25 @@ struct Session: ParsableCommand {
     }
 
     struct Move: RequestCommand {
-        static let configuration = CommandConfiguration(abstract: "Move a session to another workspace.")
-        @Argument(help: "Destination workspace id/prefix.") var workspace: String
+        static let configuration = CommandConfiguration(abstract: "Move a session to another workspace, or reorder it with --to.")
+        @Argument(help: "Destination workspace id/prefix (relocate). Omit with --to.") var workspace: String?
+        @Option(name: .long, help: "Reorder within the workspace: up, down, top, or bottom.") var to: String?
         @OptionGroup var target: TargetOptions
         @OptionGroup var options: ClientOptions
 
+        // exactly one of the workspace positional (relocate) or --to (reorder) must be set; reject the
+        // neither/both cases at parse time so it's a clean usage error, unit-testable without a socket.
+        func validate() throws {
+            switch (workspace, to) {
+            case (nil, nil): throw ValidationError("provide a destination workspace or --to")
+            case (.some, .some): throw ValidationError("provide a destination workspace or --to, not both")
+            default: break
+            }
+        }
+
         func makeRequest() throws -> ControlRequest {
-            ControlRequest(cmd: .sessionMove, target: target.target, args: options.withWindow(ControlArgs(workspace: workspace)))
+            let args = workspace.map { ControlArgs(workspace: $0) } ?? ControlArgs(to: to)
+            return ControlRequest(cmd: .sessionMove, target: target.target, args: options.withWindow(args))
         }
     }
 

@@ -14,6 +14,16 @@ struct CommandsTests {
         return try command.makeRequest()
     }
 
+    /// Parses argv expecting a validation failure and returns the user-facing message, or nil when it parses.
+    private func validationMessage(_ argv: [String]) -> String? {
+        do {
+            _ = try Agtermctl.parseAsRoot(argv)
+            return nil
+        } catch {
+            return Agtermctl.message(for: error)
+        }
+    }
+
     @Test func tree() throws {
         #expect(try request(["tree"]) == ControlRequest(cmd: .tree))
     }
@@ -39,6 +49,16 @@ struct CommandsTests {
         #expect(try request(["workspace", "select", "--target", "ab"]) == ControlRequest(cmd: .workspaceSelect, target: "ab"))
     }
 
+    @Test func workspaceMove() throws {
+        let expected = ControlRequest(cmd: .workspaceMove, target: "active", args: ControlArgs(to: "top"))
+        #expect(try request(["workspace", "move", "--to", "top"]) == expected)
+    }
+
+    @Test func workspaceMoveRequiresToFails() {
+        // --to has no default, so omitting it must fail to parse (the direction is validated server-side).
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["workspace", "move"]) }
+    }
+
     @Test func sessionNewWithCwdAndWorkspace() throws {
         let expected = ControlRequest(cmd: .sessionNew, args: ControlArgs(cwd: "/tmp", workspace: "ws1"))
         #expect(try request(["session", "new", "--cwd", "/tmp", "--workspace", "ws1"]) == expected)
@@ -60,6 +80,21 @@ struct CommandsTests {
     @Test func sessionMove() throws {
         let expected = ControlRequest(cmd: .sessionMove, target: "s1", args: ControlArgs(workspace: "ws2"))
         #expect(try request(["session", "move", "ws2", "--target", "s1"]) == expected)
+    }
+
+    @Test func sessionMoveReorder() throws {
+        let expected = ControlRequest(cmd: .sessionMove, target: "active", args: ControlArgs(to: "up"))
+        #expect(try request(["session", "move", "--to", "up"]) == expected)
+    }
+
+    @Test func sessionMoveRequiresWorkspaceOrTo() {
+        // neither the workspace positional nor --to is set — validate() rejects it with a usage message.
+        #expect(validationMessage(["session", "move"]) == "provide a destination workspace or --to")
+    }
+
+    @Test func sessionMoveRejectsWorkspaceAndTo() {
+        // both the workspace positional and --to are set — validate() rejects it with a usage message.
+        #expect(validationMessage(["session", "move", "ws2", "--to", "up"]) == "provide a destination workspace or --to, not both")
     }
 
     @Test func sessionTypeWithText() throws {
