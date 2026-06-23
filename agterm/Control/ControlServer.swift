@@ -370,6 +370,10 @@ final class ControlServer {
                                                          command: request.args?.command) else {
                         return ControlResponse(ok: false, error: "could not create session")
                     }
+                    // move first responder into the new session when it's created in the frontmost
+                    // window, so a keymap `session new --command "ssh …"` lands focused like the GUI New
+                    // Session. skip for a background `--window` target (stealing focus would be wrong).
+                    if store === library.activeStore { actions.focusActiveSession() }
                     return ControlResponse(ok: true, result: ControlResult(id: session.id.uuidString))
                 }
             }

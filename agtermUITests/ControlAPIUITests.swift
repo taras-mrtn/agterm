@@ -104,6 +104,30 @@ final class ControlAPIUITests: XCTestCase {
         try? FileManager.default.removeItem(atPath: marker)
     }
 
+    // a control session.new (frontmost window) FOCUSES the new session, so real keystrokes reach it: the
+    // command is `head -n1 > marker` (captures one typed line), and we type via the keyboard — the text
+    // only lands if the new session grabbed first responder. Guards the gate-command focus fix.
+    func testSessionNewWithCommandFocusesTheNewSession() throws {
+        let marker = NSTemporaryDirectory() + "agterm-focus-\(UUID().uuidString).txt"
+        let cmd = "head -n1 > \(marker)"
+        let created = try sendCommand(#"{"cmd":"session.new","args":{"command":"\#(cmd)"}}"#)
+        XCTAssertEqual(created["ok"] as? Bool, true, "session.new --command should succeed: \(created)")
+
+        // let the surface mount and grab first responder (focusActiveSession's bounded retry), then type.
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        app.typeText("FOCUSED")
+        app.typeKey(.return, modifierFlags: [])
+
+        var got = false
+        for _ in 0..<40 {
+            if let s = (try? String(contentsOfFile: marker, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines), s == "FOCUSED" { got = true; break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        XCTAssertTrue(got, "the new command session should be focused so typed text reaches its process")
+        try? FileManager.default.removeItem(atPath: marker)
+    }
+
     // workspace.new returns an id and the workspace appears; workspace.rename is reflected in json.
     func testWorkspaceNewAndRename() throws {
         let created = try sendCommand(#"{"cmd":"workspace.new","args":{"name":"control ws"}}"#)
