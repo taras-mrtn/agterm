@@ -91,6 +91,14 @@ targets:
         OTHER_SWIFT_FLAGS:
           - "-Xcc"
           - "-Wno-incomplete-umbrella"
+      configs:
+        # Debug/dev builds get a DISTINCT bundle id. XCUITest terminates any running instance of the
+        # app-under-test's bundle id before launching, so a shared id would kill the deployed Release
+        # app the user runs daily. Release keeps the real id (com.umputun.agterm) — only Debug is
+        # isolated. (State/socket are path-based, not bundle-id-derived, so dev/test launches must still
+        # set AGTERM_STATE_DIR to avoid touching the real app-support state.)
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.umputun.agterm.debug
     postBuildScripts:
       # build the agtermctl CLI and bundle it at Contents/MacOS/agtermctl so the
       # in-app "Install Command Line Tool" can symlink it into PATH. Runs before
