@@ -130,7 +130,12 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// `nonisolated(unsafe)`: mutated only on the main actor (create/destroy), like `configCStrings`.
     nonisolated(unsafe) private var envVars: [ghostty_env_var_s] = []
 
-    private var isFocused = false
+    /// Key-window observers (didBecomeKey/didResignKey). A surface in a background window must report an
+    /// unfocused (hollow) cursor, but AppKit first responder is per-window and does NOT resign when a
+    /// window merely loses key, so we watch key changes and re-push `liveFocus`. Removed on teardown.
+    /// `nonisolated(unsafe)`: mutated only on the main actor (register/destroy), like `configCStrings`,
+    /// but read in the nonisolated `deinit` safety net.
+    nonisolated(unsafe) private var focusObservers: [NSObjectProtocol] = []
     private var pendingSurfaceCreation = false
     /// Once destroySurface() runs this view is "retired": it must never
     /// recreate a surface (e.g. from a stray viewDidMoveToWindow).
@@ -172,6 +177,39 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         super.init(frame: .zero)
         wantsLayer = true
         setupTrackingArea()
+        observeKeyWindowChanges()
+    }
+
+    /// Watch every window's key transitions and re-evaluate this surface's focus on each. No need to
+    /// filter to my own window: `updateGhosttyFocus` reads `self.window.isKeyWindow`, so on any key change
+    /// each surface reports its OWN current state (a background window's surface goes hollow, the new key
+    /// window's active surface goes solid). Observing all windows also survives a re-host into another one.
+    private func observeKeyWindowChanges() {
+        let center = NotificationCenter.default
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateGhosttyFocus() }
+            }
+            focusObservers.append(token)
+        }
+    }
+
+    /// The cursor-focus state to report to libghostty: solid only when this surface is the first responder
+    /// of its window AND that window is key. The key-window gate is what stops every window's active surface
+    /// from blinking at once. Reading the live responder (not a cached flag) also means a re-hosted pane
+    /// reports its true focus, so opening a split can't leave both panes solid.
+    private var liveFocus: Bool {
+        guard let window else { return false }
+        return window.isKeyWindow && window.firstResponder === self
+    }
+
+    /// Push `liveFocus` to libghostty (no-op before the surface exists; `createSurface` calls this once the
+    /// surface is up). Used on window-key changes, surface (re)attach, and the auto-focus/reparent grabs.
+    /// First-responder transitions push directly, because the live `window.firstResponder` is not yet
+    /// updated to self inside `becomeFirstResponder`/`resignFirstResponder`.
+    private func updateGhosttyFocus() {
+        guard let surface else { return }
+        ghostty_surface_set_focus(surface, liveFocus)
     }
 
     @available(*, unavailable)
@@ -185,6 +223,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         // nonisolated(unsafe) and freed with C calls, so this is safe. (Normal
         // teardown goes through destroySurface() on the main actor; this is the
         // safety net for a view dropped without an explicit close.)
+        focusObservers.forEach { NotificationCenter.default.removeObserver($0) }
         if let surface { ghostty_surface_free(surface) }
         configCStrings.forEach { free($0) }
         envVars = []
@@ -430,19 +469,17 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
            let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 {
             ghostty_surface_set_display_id(surface, displayID)
         }
-        ghostty_surface_set_focus(surface, isFocused)
+        updateGhosttyFocus()
 
         // the overlay grabs first responder itself (TerminalView's once-on-attach grab misses the
         // deferred overlay surface); a bounded run-loop retry beats the SwiftUI/AppKit responder race.
         requestAutoFocus(in: window)
     }
 
-    /// Marks the surface focused in both AppKit (already first responder) and libghostty. Used by the
-    /// auto-focus retry; mirrors what `becomeFirstResponder` does, made explicit so the state is
-    /// deterministic after a retried `makeFirstResponder`.
+    /// Marks the surface focused in libghostty after a retried `makeFirstResponder` (the overlay/reparent
+    /// grabs). By now `window.firstResponder === self`, so `updateGhosttyFocus` reports the true state.
     private func notifySurfaceFocused() {
-        isFocused = true
-        if let surface { ghostty_surface_set_focus(surface, true) }
+        updateGhosttyFocus()
     }
 
     /// Starts the bounded auto-focus retry (overlay only), if not already done/in-flight.
@@ -506,6 +543,8 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
 
     func destroySurface() {
         isDestroyed = true
+        focusObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        focusObservers = []
         if let surface { ghostty_surface_free(surface) }
         surface = nil
         configCStrings.forEach { free($0) }
@@ -558,7 +597,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
             if size.width > 0, size.height > 0 {
                 ghostty_surface_set_size(surface, UInt32(size.width), UInt32(size.height))
             }
-            ghostty_surface_set_focus(surface, isFocused)
+            updateGhosttyFocus()
         }
         updateMetalLayerSize()
         // Focus is driven by TerminalView.updateNSView when this surface becomes the active session's
@@ -611,27 +650,22 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        if result {
-            // track focus even before the surface exists: the overlay grabs first responder while
-            // its surface creation is still deferred (zero backing size), and createSurface reads
-            // `isFocused` to set the initial focus — so a stale false would leave it unfocused.
-            isFocused = true
-            if let surface {
-                ghostty_surface_set_focus(surface, true)
-                onFocusChange?(true)
-            }
+        if result, let surface {
+            // becoming first responder: report focused, gated on the window being key (a background
+            // window's surface stays hollow). Push directly — `window.firstResponder` is not yet self
+            // inside this call, so `liveFocus` would read stale. onFocusChange (split-pane tracking) is
+            // independent of key state.
+            ghostty_surface_set_focus(surface, window?.isKeyWindow ?? false)
+            onFocusChange?(true)
         }
         return result
     }
 
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
-        if result {
-            isFocused = false
-            if let surface {
-                ghostty_surface_set_focus(surface, false)
-                onFocusChange?(false)
-            }
+        if result, let surface {
+            ghostty_surface_set_focus(surface, false)
+            onFocusChange?(false)
         }
         return result
     }
@@ -753,7 +787,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     override func mouseDown(with event: NSEvent) {
         guard let surface else { return }
         window?.makeFirstResponder(self)
-        ghostty_surface_set_focus(surface, true)
+        updateGhosttyFocus()
         let pt = mousePoint(from: event)
         ghostty_surface_mouse_pos(surface, pt.x, pt.y, mods(event))
         _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(event))
