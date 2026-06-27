@@ -1,17 +1,23 @@
 {
-  "fill" : "system-dark",
+  "fill" : "automatic",
   "groups" : [
     {
+      "blend-mode" : "hard-light",
+      "blur-material" : 0.5,
+      "hidden" : false,
       "layers" : [
         {
-          "image-name" : "A4F72C53-C2C4-47B2-BBCA-92D420C0E6C6.png",
-          "name" : "A4F72C53-C2C4-47B2-BBCA-92D420C0E6C6"
+          "glass" : false,
+          "image-name" : "21E595C3-2B37-478F-8762-21397D63C722.png",
+          "name" : "21E595C3-2B37-478F-8762-21397D63C722"
         }
       ],
+      "opacity" : 1,
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5
       },
+      "specular" : true,
       "translucency" : {
         "enabled" : true,
         "value" : 0.5
