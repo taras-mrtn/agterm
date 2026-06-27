@@ -63,7 +63,9 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
   errors if no workspace has that name unless `--create-workspace` is also passed, which reuses an
   existing one or creates it when absent (idempotent). `--command` runs that command as the session's
   process instead of the login shell (no echoed command line; the session closes when the command
-  exits). The command is run-once and not persisted (a restored session is a plain shell). `--name`
+  exits). It runs argv-style (tokenized, quotes respected, but NO shell), so shell operators (`;`,
+  `&&`, `$VAR`, redirects, globs) are not interpreted — wrap them yourself: `--command "sh -c '…'"`.
+  The command is run-once and not persisted (a restored session is a plain shell). `--name`
   seeds the session's custom name (the sidebar label; blank/omitted leaves the auto basename),
   equivalent to a `session rename` right after create.
 - `session close [--target] [--window W]`.
