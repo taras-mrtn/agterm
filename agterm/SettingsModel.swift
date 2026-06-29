@@ -106,6 +106,9 @@ final class SettingsModel {
     func setActiveStatusColorHex(_ hex: String?) { settings.activeStatusColorHex = hex; persistAndApply() }
     func setBlockedStatusColorHex(_ hex: String?) { settings.blockedStatusColorHex = hex; persistAndApply() }
     func setCompletedStatusColorHex(_ hex: String?) { settings.completedStatusColorHex = hex; persistAndApply() }
+    /// Persist the system sound played when a session enters `blocked` (nil/empty = none). Not a ghostty
+    /// key and nothing renders it continuously, so it only saves — `ControlServer` reads it on demand.
+    func setBlockedStatusSoundName(_ name: String?) { settings.blockedStatusSoundName = name; try? settingsStore.save(settings) }
 
     /// Apply a new background opacity live WITHOUT an immediate save — the live-drag half of the opacity
     /// slider. Updates translucency on every drag tick (apply-without-save) and schedules a debounced
@@ -182,11 +185,13 @@ final class SettingsModel {
         previewThemeDebouncer.flush()
     }
 
-    /// Clear all three agent-status colors back to the system defaults (the "Reset to defaults" button).
-    func resetStatusColors() {
+    /// Reset the whole Agent Status section to defaults (the "Reset to defaults" button): the three glyph
+    /// colors back to the system defaults AND the blocked sound back to none.
+    func resetAgentStatus() {
         settings.activeStatusColorHex = nil
         settings.blockedStatusColorHex = nil
         settings.completedStatusColorHex = nil
+        settings.blockedStatusSoundName = nil
         persistAndApply()
     }
 

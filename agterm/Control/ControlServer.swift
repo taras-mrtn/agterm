@@ -452,7 +452,7 @@ final class ControlServer {
         case .sessionStatus:
             return setSessionStatus(request.target, window: request.args?.window,
                                     status: request.args?.status, blink: request.args?.blink,
-                                    autoReset: request.args?.autoReset)
+                                    autoReset: request.args?.autoReset, sound: request.args?.sound)
         case .sessionFlag:
             return flagSession(request.target, window: request.args?.window, mode: request.args?.mode)
         case .sessionCopy:
@@ -664,16 +664,35 @@ final class ControlServer {
     /// Set the target session's agent-status indicator (control-native: no GUI/menu equivalent, like
     /// `notify`/`session.type`/`session.copy`). `status` is `idle|active|completed|blocked`; an unknown
     /// value is the structured `invalid status` error. `blink` (default false) pulses the glyph;
-    /// `autoReset` (default false) clears the indicator to idle once the session is visited. The
-    /// indicator is ephemeral and rendered only on sessions you are not currently looking at.
+    /// `autoReset` (default false) clears the indicator to idle once the session is visited. `sound`, when
+    /// non-empty, plays a one-shot sound once the status is applied (`default`/`beep` = system alert, any
+    /// other value = named system sound); it is validated up-front so an unknown name is an `unknown sound`
+    /// error that leaves the status unchanged (an empty value is treated as no per-call sound). When no
+    /// per-call `sound` is given and the session TRANSITIONS into `blocked`, the user's configured Settings
+    /// "Blocked sound" (`blockedStatusSoundName`) plays as a best-effort default. The indicator is ephemeral
+    /// and rendered on every non-idle session.
     private func setSessionStatus(_ target: String?, window: String?, status: String?, blink: Bool?,
-                                  autoReset: Bool?) -> ControlResponse {
+                                  autoReset: Bool?, sound: String?) -> ControlResponse {
         guard let parsed = AgentStatus(rawValue: status ?? "") else {
             return ControlResponse(ok: false, error: "invalid status")
         }
+        // an explicit per-call sound is validated up-front: an unknown name errors without changing status.
+        // an empty value is treated as no per-call sound, matching `AgentStatus.effectiveSound`.
+        if let sound, !sound.isEmpty, StatusSoundPlayer.shared.action(for: sound) == nil {
+            let hint = StatusSoundPlayer.standardNames.joined(separator: ", ")
+            return ControlResponse(ok: false, error: "unknown sound: \(sound) (use 'default', 'beep', or one of: \(hint))")
+        }
         return resolveSession(target, window: window) { store, id in
+            // capture the status BEFORE mutating so the Settings default plays only on a real transition.
+            let wasBlocked = store.session(withID: id)?.agentIndicator.status == .blocked
             store.setAgentIndicator(AgentIndicator(status: parsed, blink: blink ?? false,
                                                    autoReset: autoReset ?? false), forSession: id)
+            // explicit per-call sound wins on any status; the Settings default plays only when a session
+            // newly enters `blocked`, not on a repeated `blocked` set.
+            let blockedDefault = wasBlocked ? nil : self.settingsModel.settings.blockedStatusSoundName
+            if let name = parsed.effectiveSound(perCall: sound, blockedDefault: blockedDefault) {
+                StatusSoundPlayer.shared.action(for: name)?()
+            }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }

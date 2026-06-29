@@ -113,10 +113,15 @@ process — what it is running — omitted when the pane sits at its shell promp
 - `session focus [left|right|other] [--target] [--window W]` — move keyboard focus between the two
   split panes (`other` toggles, the default). Errors when the session has no split. Works whether the
   split is shown side-by-side or hidden (maximized) — when hidden, focusing a pane swaps which one shows.
-- `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--target] [--window W]` —
+- `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--target] [--window W]` —
   set the sidebar agent-status glyph. `--blink` pulses it (for attention). `--auto-reset` clears it
-  back to idle once the session is visited (use for a one-shot completion flash). An unknown state
-  errors. Setting non-idle is for agents/hooks; `idle` clears it (also available in the GUI).
+  back to idle once the session is visited (use for a one-shot completion flash). `--sound` plays a
+  one-shot sound when the status is set: `default` (the system alert sound) or a system sound name
+  (`Basso`, `Blow`, `Bottle`, `Frog`, `Funk`, `Glass`, `Hero`, `Morse`, `Ping`, `Pop`, `Purr`,
+  `Sosumi`, `Submarine`, `Tink`; also any custom sound in `~/Library/Sounds`) — an unknown name errors.
+  Without `--sound`, a `blocked` status plays the user's Settings "Blocked sound" if they configured one
+  (Appearance ▸ Agent Status; off by default); an explicit `--sound` always overrides it.
+  An unknown state errors. Setting non-idle is for agents/hooks; `idle` clears it (also available in the GUI).
 - `session flag [on|off|toggle|clear] [--target] [--window W]` — flag/unflag a session for the flagged
   working-set view (a durable, persisted membership). `on`/`off`/`toggle` act on `--target` (default
   `active`) and are idempotent; `clear` ignores the target and unflags every session in the window.
@@ -301,4 +306,4 @@ user-edited file read at launch — there is no control command for it.
 `no overlay` / `still running` / `no result` (overlay), `invalid flag mode` (session flag),
 `invalid sidebar mode` (sidebar), `invalid focus mode` (workspace focus),
 `no open window` (quick/sidebar), `window not open`
-(resize/move/`--window`), `unknown theme: <name>` (theme set). Unknown commands fail to decode and return a structured error, never a crash.
+(resize/move/`--window`), `unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound). Unknown commands fail to decode and return a structured error, never a crash.
