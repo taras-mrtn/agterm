@@ -122,6 +122,16 @@ Reload with **File ▸ Reload Config** or `agtermctl config reload`. The keybind
 - **No desktop notifications.** macOS must have granted permission (System Settings ▸ Notifications ▸ agterm), and Settings ▸ General ▸ Notifications must be on. The unseen-count badge still tracks even when banners are off.
 - **Agent-status glyph does not update.** Install the hooks from Help ▸ Install Agent Status Hooks…, then start a fresh shell so the `source` line added to your shell rc takes effect. The hooks call `agtermctl session status`, so `agtermctl` must resolve first (see above).
 
+## Claude Code's question or permission prompt stops responding after switching apps
+
+While Claude Code shows an interactive prompt (a question menu or a permission dialog), switching to another app and back can leave that prompt unresponsive to the keyboard: the arrow keys and Return do nothing. The regular Claude Code prompt and the shell are unaffected, so you can still type there.
+
+This is a Claude Code bug, not an agterm bug. When a window regains focus, agterm sends the standard terminal focus-in report (`ESC[I`, DEC private mode 1004), which any terminal does once an application turns focus reporting on. Claude Code's dialog input handler consumes that report instead of treating it as focus state, which wedges the prompt. It is tracked upstream as [anthropics/claude-code#72188](https://github.com/anthropics/claude-code/issues/72188); the mouse-click variant is [#72273](https://github.com/anthropics/claude-code/issues/72273).
+
+agterm is behaving correctly: it emits paired focus-in and focus-out reports with nothing stray, and it follows the macOS focus-first convention, so a click that refocuses the window only focuses it and is not forwarded into the terminal. The trigger is the focus report itself, so any terminal with focus reporting on is affected the same way.
+
+Workaround until the upstream fix: answer the prompt before switching away, or if you have already returned to a stuck prompt, press `Esc` to dismiss it and let Claude Code re-ask.
+
 ## Reporting a problem
 
 Collect this before filing:

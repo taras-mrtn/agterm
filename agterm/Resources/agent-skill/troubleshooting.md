@@ -62,6 +62,17 @@ A Dvorak/Colemak user who wants ⌘C/⌘V at their own letter positions override
 `~/.config/agterm/ghostty.conf` (`super+key_c=unbind` + `super+c=copy_to_clipboard`, same for `v`), then
 `agtermctl config reload`.
 
+### "Claude Code's question/permission prompt is unresponsive after switching apps"
+
+Known upstream Claude Code bug, NOT agterm. Do not file an agterm issue for it. While Claude Code shows
+an interactive prompt (a question menu or a permission dialog), switching to another app and back leaves
+it deaf to the keyboard (arrows and Return do nothing); the normal prompt and the shell still work. On
+refocus agterm sends the standard focus-in report (`ESC[I`, DEC mode 1004); Claude Code's dialog handler
+mishandles it. agterm emits correct paired focus-in/focus-out and is already macOS focus-first (the
+refocus click is not forwarded into the pty), so the terminal is not at fault. Tracked as
+anthropics/claude-code#72188 (mouse-click variant #72273). Workaround: answer before switching away, or
+`Esc` the stuck prompt and let it re-ask.
+
 ## Reporting: decide bug vs unsupported FIRST
 
 - A **supported** thing misbehaves (a documented command/feature does the wrong thing, a crash, a parse
