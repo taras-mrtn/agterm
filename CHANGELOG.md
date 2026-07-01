@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.1 - 2026-07-01
+
+### Bug Fixes
+
+- hide the sidebar scroll bar when the tree fits, instead of always showing a track under macOS "Show scroll bars: Always" ab1d4a8 @umputun
+
 ## v0.5.0 - 2026-07-01
 
 ### New Features
