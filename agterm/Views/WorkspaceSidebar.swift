@@ -276,6 +276,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
         scroll.identifier = NSUserInterfaceItemIdentifier("agterm-sidebar-scroll")
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
+        // hide the scroller when the tree fits (the common case): without this, macOS set to
+        // "Show scroll bars: Always" paints a permanent track over the short, non-overflowing tree.
+        scroll.autohidesScrollers = true
         // transparent: the window's backgroundColor (the terminal color, set by
         // WindowAppearance) shows through the sidebar's translucent material so the whole
         // column — including the strip behind the titlebar — reads as one dark surface.
