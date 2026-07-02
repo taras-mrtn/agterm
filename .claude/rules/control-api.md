@@ -4,8 +4,7 @@ paths:
   - "agterm/Control/ControlTargetResolver.swift"
   - "agtermCore/Sources/agtermCore/ControlProtocol.swift"
   - "agtermCore/Sources/agtermCore/ControlResolve.swift"
-  - "agtermCore/Sources/agtermctlKit/Commands.swift"
-  - "agtermCore/Sources/agtermctlKit/SocketClient.swift"
+  - "agtermCore/Sources/agtermctlKit/*.swift"
   - "agtermCore/Sources/agtermctl/main.swift"
   - "agterm/CLIInstaller.swift"
   - "agterm/AgentHooksInstaller.swift"
@@ -41,8 +40,10 @@ paths:
      dispatched onto `AppActions`/`AppStore` (plus a thin `GhosttySurfaceView.inject(text:)` for input),
      and the `ControlResponse` written back before the connection closes.
   3. **`agtermctl` CLI**
-     in the `agtermCore` SwiftPM package: an `agtermctlKit` library (the `ParsableCommand` tree in `Commands.swift`
-     + the socket client in `SocketClient.swift`) plus a thin `agtermctl` executable.
+     in the `agtermCore` SwiftPM package: an `agtermctlKit` library (the `ParsableCommand` tree — root
+     `Agtermctl` + shared option/request plumbing in `Commands.swift`, subcommands split by family into
+     `SessionCommands.swift`/`WorkspaceCommands.swift`/`WindowCommands.swift`/`MiscCommands.swift` — and
+     the socket client in `SocketClient.swift`) plus a thin `agtermctl` executable.
      It links `swift-argument-parser`; the `agtermCore` library target stays dependency-free.
      Builds with `swift build`, needs no Xcode/GhosttyKit.
 - **Bundling + install.**
