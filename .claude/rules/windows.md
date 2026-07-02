@@ -4,6 +4,7 @@ paths:
   - "agtermCore/Sources/agtermCore/WindowGeometry.swift"
   - "agtermCore/Sources/agtermCore/QuitPrompt.swift"
   - "agterm/WindowRegistry.swift"
+  - "agterm/AppDelegate.swift"
   - "agterm/Views/WindowAccessor.swift"
   - "agterm/Views/WindowControlArea.swift"
   - "agterm/Views/QuickTerminal.swift"

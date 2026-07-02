@@ -1,7 +1,7 @@
 ---
 paths:
   - "agterm/AppActions.swift"
-  - "agterm/agtermApp.swift"
+  - "agterm/agtermApp*.swift"
   - "agterm/Views/Palette.swift"
   - "agterm/Views/PaneShortcuts.swift"
   - "agterm/Views/SessionSwitcher.swift"
