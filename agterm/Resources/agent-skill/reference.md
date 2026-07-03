@@ -295,8 +295,11 @@ expressible as a parsed chord. Some chords are reserved (the Ctrl-Tab switcher, 
 and cannot be bound.
 
 Custom-command tokens (expanded into the `/bin/sh -c` line, raw — prefer the quoted `$AGT_*` env form
-for untrusted content):
+for untrusted content). A remote host can set the session title (OSC) and working directory (OSC 7),
+so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECTION}`; use the quoted
+`$AGT_*` form for any of them:
 
+- `{AGT_SESSION_NAME}` / `$AGT_SESSION_NAME` — the session's display name (the focused pane's terminal title, remote-settable via OSC).
 - `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the focused pane's working directory.
 - `{AGT_SELECTION}` / `$AGT_SELECTION` — the current selection.
 - Plus the other `$AGT_*` context vars the runner exports.
