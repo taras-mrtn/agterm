@@ -53,6 +53,31 @@ struct ControlProtocolTests {
         }
     }
 
+    @Test func sessionOverlayOpenRoundTripsWithFollow() throws {
+        let follow = ControlRequest(cmd: .sessionOverlayOpen, target: "9f3c",
+                                    args: ControlArgs(command: "revdiff", follow: true))
+        let decodedFollow = try roundTrip(follow)
+        #expect(decodedFollow == follow)
+        #expect(decodedFollow.args?.follow == true)
+
+        let noFollow = ControlRequest(cmd: .sessionOverlayOpen, target: "9f3c",
+                                      args: ControlArgs(command: "revdiff", follow: false))
+        let decodedNoFollow = try roundTrip(noFollow)
+        #expect(decodedNoFollow == noFollow)
+        #expect(decodedNoFollow.args?.follow == false)
+    }
+
+    @Test func sessionOverlayOpenOmitsFollowWhenNil() throws {
+        let request = ControlRequest(cmd: .sessionOverlayOpen, target: "9f3c", args: ControlArgs(command: "revdiff"))
+        let decoded = try roundTrip(request)
+        #expect(decoded == request)
+        #expect(decoded.args?.follow == nil)
+        // verify the omit-when-nil WIRE contract (the reason follow is Bool?): a nil follow must not be
+        // encoded at all, not emitted as null.
+        let json = String(data: try JSONEncoder().encode(request), encoding: .utf8) ?? ""
+        #expect(!json.contains("follow"), "a nil follow must be omitted from the JSON; got \(json)")
+    }
+
     @Test func sessionTextRoundTripsWithAllLinesAndPane() throws {
         let request = ControlRequest(cmd: .sessionText, target: "9f3c",
                                      args: ControlArgs(pane: "left", all: true, lines: 50))

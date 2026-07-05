@@ -76,13 +76,16 @@ public struct ControlSessionOverlayOpenOptions: Equatable, Sendable {
     public let wait: Bool
     public let sizePercent: Int?
     public let backgroundColor: String?
+    public let follow: Bool
 
-    public init(command: String, cwd: String?, wait: Bool, sizePercent: Int?, backgroundColor: String?) {
+    public init(command: String, cwd: String?, wait: Bool, sizePercent: Int?, backgroundColor: String?,
+                follow: Bool = false) {
         self.command = command
         self.cwd = cwd
         self.wait = wait
         self.sizePercent = sizePercent
         self.backgroundColor = backgroundColor
+        self.follow = follow
     }
 }
 
@@ -314,7 +317,8 @@ public struct ControlDispatcher {
                                                 cwd: request.args?.cwd,
                                                 wait: request.args?.wait ?? false,
                                                 sizePercent: request.args?.sizePercent,
-                                                backgroundColor: request.args?.color
+                                                backgroundColor: request.args?.color,
+                                                follow: request.args?.follow ?? false
                                               ))
         case .sessionOverlayClose:
             return actions.closeSessionOverlay(request.target, window: request.args?.window)
