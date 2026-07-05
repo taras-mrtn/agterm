@@ -350,19 +350,20 @@ paths:
   focused pane, the SAME resolution `session.search` uses), so a no-`pane` read returns what's visible,
   not a pane hidden under the scratch) picks the pane.
   `args.all`+`args.lines` are mutually exclusive and `args.lines` must be > 0 — validated SERVER-SIDE in
-  `readText` (mirroring the CLI `validate()`), NOT only CLI-side, so a raw socket client can't bypass it
+  the dispatcher (`ControlDispatcher.dispatchSessionText`, mirroring the CLI `validate()`), NOT only CLI-side, so a raw socket client can't bypass it
   (an unchecked `lines ≤ 0` would otherwise fall through to the full buffer).
   UNLIKE `session.focus`, the `pane` here is `left|right|scratch` (no `other`).
   A genuinely BLANK screen reads `ok` with an empty string (NOT an error, on purpose — differs from `session.copy`'s
   `no selection`), but a FAILED `ghostty_surface_read_text` is a `failed to read surface buffer` error:
-  `readScreenText` returns `""` for the empty read and nil ONLY for a real failure, which `readText` maps
+  `readScreenText` returns `""` for the empty read and nil ONLY for a real failure, which the app-side `readSessionText` maps
   to the error (so a caller can tell a blank terminal from a broken read).
   Plain text only — the pinned libghostty exposes only `ghostty_surface_read_text` (no per-cell SGR),
   so `--ansi` is out of scope until a styled surface read lands upstream and the pin is bumped.
   Four-point keep-in-sync audit for `session.text`: (1) `case sessionText = "session.text"` + new `ControlArgs.all: Bool?`/`lines: Int?`
-  (reuses `pane` + `ControlResult.text`) in `ControlProtocol.swift`, (2) the `.sessionText` dispatch arm (`readText`)
-  in `ControlServer`, (3) the `session text [--all] [--lines N] [--pane left|right|scratch]` subcommand in `agtermctlKit`
-  (`validate()` guards the flag combos, re-enforced SERVER-SIDE in `readText`), (4) round-trip tests in
+  (reuses `pane` + `ControlResult.text`) in `ControlProtocol.swift`, (2) the `.sessionText` dispatcher arm —
+  `ControlDispatcher.dispatchSessionText` (validation + response shape) with the app-side `readSessionText` (the surface read) behind `ControlActions`,
+  (3) the `session text [--all] [--lines N] [--pane left|right|scratch]` subcommand in `agtermctlKit`
+  (`validate()` guards the flag combos, re-enforced SERVER-SIDE in the dispatcher), (4) round-trip tests in
   `ControlProtocolTests` + the e2e (`testSessionTextReturnsBuffer`, `testSessionTextSplitPaneWithoutSplitErrors`,
   `testSessionTextRejectsInvalidArgsServerSide`, `testSessionTextBlankScreenReturnsOkEmpty`) in `SessionTextUITests`
   (a `ControlAPITestCase` subclass in its own file, sharing the harness base with the `Control*UITests` suites).
@@ -690,7 +691,7 @@ paths:
   App-global like `keymap.reload` (clears all open windows, no `--window`).
   Four-point keep-in-sync audit for `restore.clear`: (1) `case restoreClear = "restore.clear"` in `ControlProtocol.swift`
   (no target/args; `foreground`/`splitForeground` added to `ControlSessionNode`),
-  (2) the `.restoreClear` dispatch arm (`clearSavedCommands`) in `ControlServer` + the foreground population
+  (2) the `.restoreClear` dispatcher arm → the app-side `ControlActions.clearRestoreCommands` + the foreground population
   in the tree builder, (3) the `restore clear` subcommand (`Restore`) in `agtermctlKit`,
   (4) round-trip (`restoreClearRoundTrips` + `treeSessionNodeRoundTripsWithForeground`/`…OmitsForegroundWhenNil`)
   in `ControlProtocolTests` + the e2e (`testTreeExposesForegroundProcess`,
@@ -739,8 +740,9 @@ paths:
   Four-point keep-in-sync audit for `session.background`: (1) `case sessionBackground = "session.background"`
   + `ControlArgs.path`/`color`/`opacity`/`fit`/`position`/`repeats` in `ControlProtocol.swift` (+ `background`
   on `ControlSessionNode` for the read-back),
-  (2) the `.sessionBackground` dispatch arm (`setBackground`, validating + building the spec, then `applyWatermark`
-  to the realized surfaces) in `ControlServer` (+ `background:` populated in the tree builder), (3) the
+  (2) the `.sessionBackground` dispatcher arm — `ControlDispatcher.dispatchSessionBackground` validates + builds the spec,
+  the app-side `setSessionBackground` does the filesystem checks (`isSupportedImage`/`fileExists`) + `applyWatermark`
+  to the realized surfaces (+ `background:` populated in the tree builder), (3) the
   `session background image|text|color|clear` subcommands in `agtermctlKit` (shared opacity/color/fit/position
   `validate()`; `color` takes color only, no opacity), (4) round-trip in `ControlProtocolTests` (incl.
   `treeSessionNodeRoundTripsWithBackground` + `backgroundWatermarkColorKindSerializes`)
