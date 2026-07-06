@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.4 - 2026-07-06
+
+### Bug Fixes
+
+- hiding or showing the sidebar is now instant on windows with many sessions, instead of lagging as every terminal pane re-rendered 9440f1a @umputun
+
 ## v0.8.3 - 2026-07-06
 
 ### Improvements
