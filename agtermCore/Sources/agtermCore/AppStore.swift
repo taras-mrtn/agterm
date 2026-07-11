@@ -179,7 +179,8 @@ public final class AppStore {
                             fontSize: (Session) -> Double? = { _ in nil },
                             splitFontSize: (Session) -> Double? = { _ in nil },
                             scratchFontSize: (Session) -> Double? = { _ in nil },
-                            quickVisible: () -> Bool? = { nil }) -> ControlTree {
+                            quickVisible: () -> Bool? = { nil },
+                            zoomedSurface: () -> String? = { nil }) -> ControlTree {
         let activeID = selectedSessionID
         let activeWorkspaceID = activeID.flatMap { workspace(forSession: $0)?.id }
         let nodes = workspaces.map { workspace in
@@ -187,6 +188,13 @@ public final class AppStore {
                 let idle = session.agentIndicator.status == .idle
                 let status = idle ? nil : session.agentIndicator.status.rawValue
                 let statusPane = idle ? nil : session.agentIndicator.statusPane?.rawValue
+                let surfaces = TerminalZoomSurface.allCases.compactMap { surface -> ControlSurfaceNode? in
+                    guard surface.isAvailable(in: session) else { return nil }
+                    let id = TerminalSurfaceID(sessionID: session.id, surface: surface).rawValue
+                    return ControlSurfaceNode(id: id, kind: surface.rawValue,
+                                              active: surface.isActive(in: session),
+                                              visible: surface.isVisible(in: session))
+                }
                 return ControlSessionNode(id: session.id.uuidString, name: session.displayName,
                                           cwd: session.effectiveCwd, title: session.oscTitle,
                                           active: session.id == activeID,
@@ -205,7 +213,8 @@ public final class AppStore {
                                           unseen: session.unseenCount > 0 ? session.unseenCount : nil,
                                           fontSize: fontSize(session),
                                           splitFontSize: splitFontSize(session),
-                                          scratchFontSize: scratchFontSize(session))
+                                          scratchFontSize: scratchFontSize(session),
+                                          surfaces: surfaces)
             }
             return ControlWorkspaceNode(id: workspace.id.uuidString, name: workspace.name,
                                         active: workspace.id == activeWorkspaceID,
@@ -214,7 +223,7 @@ public final class AppStore {
         }
         return ControlTree(workspaces: nodes, idleMs: idleMs(), autoFollowMs: autoFollowMs,
                            sidebarVisible: sidebarVisible, sidebarMode: sidebarMode.rawValue,
-                           quickVisible: quickVisible())
+                           quickVisible: quickVisible(), zoomedSurface: zoomedSurface())
     }
 
     /// Creates a workspace and appends it. Clears any active focus so the new (empty)

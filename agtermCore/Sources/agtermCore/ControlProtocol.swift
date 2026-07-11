@@ -26,6 +26,7 @@ public enum Command: String, Codable, Sendable {
     case sessionScratch = "session.scratch"
     case sessionFocus = "session.focus"
     case sessionResize = "session.resize"
+    case surfaceZoom = "surface.zoom"
     case sessionCopy = "session.copy"
     case sessionPaste = "session.paste"
     case sessionSelectAll = "session.selectall"
@@ -92,7 +93,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var text: String?
     /// Whether `session.type` may select a never-shown session to realize its surface.
     public var select: Bool?
-    /// Mode for `session.split` / `quick` (`on|off|toggle`, `show|hide|toggle` for quick),
+    /// Mode for `session.split` / `quick` / `surface.zoom` (`on|off|toggle`,
+    /// `show|hide|toggle` for quick/surface zoom),
     /// `session.flag` (`on|off|toggle|clear`), `sidebar.mode` (`tree|flagged|toggle`),
     /// `workspace.focus` (`on|off|toggle`), and `session.background` (`image|text|color|clear`).
     public var mode: String?
@@ -262,6 +264,26 @@ public struct ControlRequest: Codable, Sendable, Equatable {
     }
 }
 
+/// A terminal surface as projected into the `tree` response. `id` is the stable control address to pass
+/// to `surface.zoom`; `kind` is the user-facing surface name (`left`, `right`, `scratch`, `overlay`).
+/// `active`/`visible` are derived from the session's own flags (overlay/scratch/splitFocused), NOT from
+/// terminal zoom — and `visible` reads false for a pane behind a FLOATING overlay even though that pane
+/// is visually on screen (the derivation treats any open overlay as covering). Address by `id`/`kind`,
+/// not by these flags; read the window's zoom state from the tree's top-level `zoomedSurface`.
+public struct ControlSurfaceNode: Codable, Sendable, Equatable {
+    public let id: String
+    public let kind: String
+    public let active: Bool
+    public let visible: Bool
+
+    public init(id: String, kind: String, active: Bool, visible: Bool) {
+        self.id = id
+        self.kind = kind
+        self.active = active
+        self.visible = visible
+    }
+}
+
 /// A session as projected into the `tree` response.
 public struct ControlSessionNode: Codable, Sendable, Equatable {
     public let id: String
@@ -329,6 +351,11 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// The scratch terminal's live font size in points, or nil when no scratch surface is realized (omitted).
     /// The read side of `font --pane scratch` (also live-only).
     public let scratchFontSize: Double?
+    /// Addressable terminal surfaces owned by this session, or nil when talking to a server that
+    /// predates `surface.zoom` (omitted from the JSON — the optional-field pattern every post-v1 tree
+    /// addition uses, keeping Codable synthesized). Hidden-but-alive surfaces are included so control
+    /// clients can zoom them without mutating split/scratch visibility first.
+    public let surfaces: [ControlSurfaceNode]?
 
     public init(id: String, name: String, cwd: String, title: String? = nil, active: Bool, split: Bool,
                 splitRatio: Double? = nil, splitFocused: Bool? = nil,
@@ -336,7 +363,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
                 foreground: [String]? = nil, splitForeground: [String]? = nil, status: String? = nil,
                 statusPane: String? = nil, statusBlink: Bool? = nil, statusColor: String? = nil,
                 background: BackgroundWatermark? = nil, unseen: Int? = nil,
-                fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil) {
+                fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil,
+                surfaces: [ControlSurfaceNode]? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
@@ -360,6 +388,7 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.fontSize = fontSize
         self.splitFontSize = splitFontSize
         self.scratchFontSize = scratchFontSize
+        self.surfaces = surfaces
     }
 }
 
@@ -415,15 +444,24 @@ public struct ControlTree: Codable, Sendable, Equatable {
     /// (not on `window.list`), since a GUI-only ⌃` toggle bypasses the command path and would leave a
     /// cached copy stale — read the live tree copy instead. nil in a host-produced tree with no app closure.
     public let quickVisible: Bool?
+    /// The control id of the surface terminal zoom currently fills the projected window with —
+    /// `surface:<session-id>:<kind>` for a session surface, `quick` for the quick terminal — or
+    /// nil/omitted when nothing is zoomed. LIVE — resolved app-side per request from the window's
+    /// `TerminalZoomController` — the read side of the write-only `surface.zoom` command, so a script
+    /// can check "is it already zoomed" and record-then-restore. `tree`-only (not on `window.list`),
+    /// like `quickVisible`: the GUI toggle bypasses the command path and would leave a cached copy stale.
+    public let zoomedSurface: String?
 
     public init(workspaces: [ControlWorkspaceNode], idleMs: Int? = nil, autoFollowMs: Int? = nil,
-                sidebarVisible: Bool? = nil, sidebarMode: String? = nil, quickVisible: Bool? = nil) {
+                sidebarVisible: Bool? = nil, sidebarMode: String? = nil, quickVisible: Bool? = nil,
+                zoomedSurface: String? = nil) {
         self.workspaces = workspaces
         self.idleMs = idleMs
         self.autoFollowMs = autoFollowMs
         self.sidebarVisible = sidebarVisible
         self.sidebarMode = sidebarMode
         self.quickVisible = quickVisible
+        self.zoomedSurface = zoomedSurface
     }
 }
 
